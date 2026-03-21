@@ -1,0 +1,236 @@
+GUIA DE INSTALACION - ADA PLATFORM EN LINUX
+===========================================
+
+Esta guia instala todo el sistema en Linux (Ubuntu/Debian), incluyendo:
+- Entorno Python
+- Base de datos PostgreSQL
+- Vector DB Qdrant
+- API + Bot de Telegram
+- Obsidian como vault local
+- Validacion de funcionamiento end-to-end
+
+
+0) REQUISITOS
+-------------
+- Linux Ubuntu/Debian
+- Acceso sudo
+- Token de Telegram Bot (TELEGRAM_API)
+- Claves de modelo:
+  - GEMINI_API_KEY (requerida para embeddings/memoria)
+  - ANTHROPIC_API_KEY (recomendada: excel/document analysis usan opus por default)
+
+
+1) DEPENDENCIAS DEL SISTEMA
+---------------------------
+Ejecuta:
+
+sudo apt update
+sudo apt install -y git curl jq python3 python3-venv python3-pip docker.io docker-compose-plugin postgresql-client
+sudo systemctl enable --now docker
+
+
+2) CLONAR PROYECTO Y ENTORNO PYTHON
+-----------------------------------
+cd /opt
+sudo git clone <URL_DE_TU_REPO> ada-langgraph-main
+sudo chown -R $USER:$USER /opt/ada-langgraph-main
+cd /opt/ada-langgraph-main
+
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+
+3) LEVANTAR POSTGRES Y QDRANT CON DOCKER
+----------------------------------------
+docker network create ada-net || true
+
+docker run -d --name ada-postgres \
+  --network ada-net \
+  -e POSTGRES_USER=ada \
+  -e POSTGRES_PASSWORD=ada123 \
+  -e POSTGRES_DB=ada_db \
+  -p 5432:5432 \
+  postgres:16
+
+docker run -d --name ada-qdrant \
+  --network ada-net \
+  -p 6333:6333 \
+  -v qdrant_storage:/qdrant/storage \
+  qdrant/qdrant
+
+Validar servicios:
+
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+curl -s http://127.0.0.1:6333/health
+
+
+4) CONFIGURAR .env
+------------------
+Crear .env en la raiz del proyecto (si no existe):
+
+cp .env.example .env
+
+Editar .env y dejar al menos estas variables:
+
+DATABASE_URL=postgresql+asyncpg://ada:ada123@127.0.0.1:5432/ada_db
+SQL_ECHO=false
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_API_KEY=
+GEMINI_API_KEY=TU_GEMINI_API_KEY
+ANTHROPIC_API_KEY=TU_ANTHROPIC_API_KEY
+TELEGRAM_API=TU_TOKEN_TELEGRAM
+ADA_API_URL=http://127.0.0.1:8000
+ENABLE_DRIVE_INGESTION=false
+
+TELEGRAM_AUTO_SAVE_MD=true
+TELEGRAM_AUTO_INGEST_MD=true
+TELEGRAM_MD_DIR=boveda/Adaobsidian/Inbox
+TELEGRAM_INGEST_ONLY_MEMORY_CANDIDATES=true
+
+Nota:
+- Este proyecto usa DATABASE_URL (no POSTGRES_URL) para conectar la DB.
+
+
+5) CREAR ESQUEMA DE BASE DE DATOS
+---------------------------------
+psql "postgresql://ada:ada123@127.0.0.1:5432/ada_db" -f scripts/schema.sql
+
+
+6) CREAR EMPRESA Y USUARIO PARA VINCULAR TELEGRAM
+-------------------------------------------------
+Generar hash de password:
+
+source venv/bin/activate
+python - <<'PY'
+from api.security import hash_password
+print(hash_password("Admin123*"))
+PY
+
+Guarda ese hash y ejecuta SQL (reemplaza <HASH>):
+
+psql "postgresql://ada:ada123@127.0.0.1:5432/ada_db" <<'SQL'
+INSERT INTO empresas (id, nombre, sector)
+VALUES ('8a706927-a3ee-4f72-b7bc-cd6fcc8a1911', 'Ada Demo', 'tech')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO usuarios (id, empresa_id, email, nombre, password, rol)
+VALUES (
+  'e661c847-65da-416e-bfd5-0a216999141a',
+  '8a706927-a3ee-4f72-b7bc-cd6fcc8a1911',
+  'admin@ada.local',
+  'Admin Ada',
+  '<HASH>',
+  'administrador'
+)
+ON CONFLICT (email) DO NOTHING;
+SQL
+
+
+7) INSTALAR OBSIDIAN EN LINUX
+-----------------------------
+Opcion A (Snap):
+
+sudo snap install obsidian --classic
+
+Opcion B (Flatpak):
+
+flatpak install -y flathub md.obsidian.Obsidian
+
+Abrir vault del proyecto:
+- Vault recomendado: /opt/ada-langgraph-main/boveda/Adaobsidian
+- Crea Inbox si no existe:
+
+mkdir -p /opt/ada-langgraph-main/boveda/Adaobsidian/Inbox
+
+
+8) LEVANTAR API Y BOT
+---------------------
+Terminal 1 (API):
+
+cd /opt/ada-langgraph-main
+source venv/bin/activate
+set -a
+source .env
+set +a
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+Terminal 2 (Bot):
+
+cd /opt/ada-langgraph-main
+source venv/bin/activate
+set -a
+source .env
+set +a
+python -m bot.telegram_bot
+
+
+9) PRUEBA FUNCIONAL COMPLETA (TELEGRAM + OBSIDIAN)
+--------------------------------------------------
+1. En Telegram: envia /start al bot.
+2. Cuando pida email, envia: admin@ada.local
+3. Envia mensaje de memoria:
+   "Prueba memoria OBS_55555. Mi color favorito es azul."
+4. Envia consulta:
+   "Dime exacto mi codigo, color favorito y archivo fuente tg_*"
+
+Resultado esperado:
+- El bot responde con codigo/color/archivo tg_*
+- Se crea archivo .md en:
+  boveda/Adaobsidian/Inbox
+
+Validacion por shell:
+
+ls -lt boveda/Adaobsidian/Inbox | head
+
+curl -s "http://127.0.0.1:8000/api/v1/reports?empresa_id=8a706927-a3ee-4f72-b7bc-cd6fcc8a1911&report_type=markdown_raw&limit=5" | jq
+
+
+10) VERIFICACIONES RAPIDAS
+--------------------------
+Health API:
+
+curl -s http://127.0.0.1:8000/health | jq
+
+Usuario vinculado a Telegram (reemplaza TU_TELEGRAM_ID):
+
+curl -s "http://127.0.0.1:8000/auth/telegram/TU_TELEGRAM_ID" | jq
+
+
+11) TROUBLESHOOTING
+-------------------
+Problema: "Conflict: terminated by other getUpdates request"
+- Hay otro bot corriendo con el mismo token.
+- Mata procesos python previos del bot.
+
+Problema: API health ok pero no guarda memoria
+- Revisa .env:
+  - TELEGRAM_AUTO_INGEST_MD=true
+  - TELEGRAM_MD_DIR correcto
+  - GEMINI_API_KEY valida
+  - QDRANT_URL accesible
+
+Problema: No responde datos exactos de memoria
+- Asegura que primero enviaste un mensaje de memoria (no solo consultas).
+- Mantener:
+  TELEGRAM_INGEST_ONLY_MEMORY_CANDIDATES=true
+
+Problema: Error de DB
+- Verifica DATABASE_URL y que postgres este arriba:
+  docker ps
+  psql "postgresql://ada:ada123@127.0.0.1:5432/ada_db" -c "select 1;"
+
+
+12) APAGAR SERVICIOS
+--------------------
+Detener API/Bot (Ctrl+C en cada terminal).
+
+Detener contenedores:
+
+docker stop ada-postgres ada-qdrant
+
+Iniciar de nuevo:
+
+docker start ada-postgres ada-qdrant
+

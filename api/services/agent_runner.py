@@ -1,0 +1,291 @@
+"""
+Agent Runner - orquesta Firewall -> Router -> Tool Orchestrator -> Agente.
+"""
+
+import re
+
+from api.agents.excel_agent import excel_agent
+from api.agents.router_agent import router_agent
+from api.agents.chat_agent import chat_agent
+from api.agents.email_agent import email_agent
+from api.agents.calendar_agent import calendar_agent
+from api.agents.team_agent import team_agent
+from api.agents.notion_agent import notion_agent
+from api.agents.plane_agent import plane_agent
+from api.agents.briefing_agent import briefing_agent
+from api.agents.morning_brief_agent import morning_brief_agent
+from api.agents.prospect_pro_agent import prospect_pro_agent
+from api.agents.image_agent import image_agent
+
+from api.services.semantic_firewall import evaluate_semantic_firewall
+from api.services.tool_orchestrator import collect_multi_source_context
+from api.services.response_policy import enforce_response_contract
+from api.services.artifact_service import wants_pdf, generate_pdf_from_text
+from api.services.chart_service import wants_chart, generate_chart_from_text
+from api.services.output_mode_policy import decide_output_mode
+from api.services.memory_service import search_reports_qdrant, search_vector_store1
+
+
+AGENT_REGISTRY = {
+    "chat_agent": chat_agent,
+    "excel_analyst": excel_agent,
+    "image_analyst": image_agent,
+    "calendar_agent": calendar_agent,
+    "email_agent": email_agent,
+    "prospecting_agent": prospect_pro_agent,
+    "team_agent": team_agent,
+    "notion_agent": notion_agent,
+    "project_agent": plane_agent,
+    "briefing_agent": briefing_agent,
+    "morning_brief_agent": morning_brief_agent,
+}
+
+DEFAULT_AGENT = "chat_agent"
+_LAST_CHART_BY_USER: dict[str, dict] = {}
+
+
+def _response_suggests_manual_pdf(text: str) -> bool:
+    body = (text or "").lower()
+    markers = [
+        "copiar este texto",
+        "procesador de textos",
+        "guardarlo o exportarlo como pdf",
+        "exportarlo como pdf",
+        "word o google docs",
+    ]
+    return any(m in body for m in markers)
+
+
+def _build_pdf_title(intent: str, message: str) -> str:
+    safe_intent = (intent or "reporte").strip().lower()
+    first_part = re.sub(r"[^a-zA-Z0-9 ]+", " ", (message or "").strip())[:48].strip()
+    if not first_part:
+        first_part = "reporte"
+    return f"Ada {safe_intent} - {first_part}"
+
+
+def _build_chart_title(intent: str, message: str) -> str:
+    safe_intent = (intent or "analisis").strip().lower()
+    first_part = re.sub(r"[^a-zA-Z0-9 ]+", " ", (message or "").strip())[:42].strip()
+    if not first_part:
+        first_part = "estadisticas"
+    return f"Grafico {safe_intent} - {first_part}"
+
+
+def _chart_user_key(empresa_id: str | None, user_id: str | None) -> str:
+    return f"{empresa_id or 'no_empresa'}::{user_id or 'no_user'}"
+
+
+def _align_response_with_artifacts(text: str, has_chart: bool, has_pdf: bool) -> str:
+    body = (text or "").strip()
+    if not body:
+        return body
+
+    if has_chart:
+        body = re.sub(r"(?im)^.*no puedo.*gr[aá]fico.*$\n?", "", body)
+    if has_pdf:
+        body = re.sub(r"(?im)^.*no puedo.*pdf.*$\n?", "", body)
+
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+
+    if has_chart and has_pdf:
+        headline = "Grafico y PDF generados automaticamente y adjuntados."
+    elif has_chart:
+        headline = "Grafico generado automaticamente y adjuntado."
+    elif has_pdf:
+        headline = "PDF generado automaticamente y adjuntado."
+    else:
+        return body
+
+    if body.lower().startswith("bluf:"):
+        body = re.sub(r"(?is)^bluf:\s*", "", body, count=1).strip()
+    return f"{headline}\n\n{body}"
+
+
+def _looks_like_no_data_response(text: str) -> bool:
+    body = (text or "").lower()
+    markers = [
+        "no encontre",
+        "no encontr",
+        "no hay informacion",
+        "sin informacion",
+        "no tengo datos",
+        "no se encontro",
+    ]
+    return any(m in body for m in markers)
+
+
+async def run_agent(
+    message: str,
+    empresa_id: str = None,
+    user_id: str = None,
+    has_file: bool = False,
+    file_type: str = None,
+    source: str = "api",
+) -> dict:
+    output_mode = decide_output_mode(message=message or "", source=source)
+
+    # 1) Semantic firewall previo al agente
+    firewall = evaluate_semantic_firewall(message=message or "", source=source)
+    if firewall.get("blocked"):
+        return {
+            "response": firewall.get("response", "Solicitud bloqueada por Firewall Semantico."),
+            "intent": "blocked",
+            "confidence": 1.0,
+            "routed_to": "semantic_firewall",
+            "model_used": "firewall",
+            "blocked": True,
+            "firewall_reason": firewall.get("reason", "blocked"),
+            "output_mode": output_mode,
+            "traceability": {
+                "primary_source": "semantic_firewall",
+                "secondary_source": "semantic_firewall",
+                "sources_used": [{"name": "semantic_firewall", "detail": firewall.get("reason", "blocked"), "confidence": 1.0}],
+                "confidence": 1.0,
+            },
+        }
+
+    # 2) Router por intent
+    router_result = await router_agent.ainvoke({
+        "message": message,
+        "empresa_id": empresa_id or "",
+        "user_id": user_id or "",
+        "has_file": has_file,
+        "file_type": file_type,
+        "source": source,
+    })
+
+    intent = router_result.get("intent", "conversational")
+    routed_to = router_result.get("routed_to", DEFAULT_AGENT)
+    confidence = router_result.get("confidence", 0.0)
+
+    print(f"RUNNER: intent={intent}, routed_to={routed_to}, confidence={confidence}")
+
+    agent = AGENT_REGISTRY.get(routed_to)
+    if not agent:
+        print(f"WARNING: Agent '{routed_to}' not implemented. Using {DEFAULT_AGENT}")
+        agent = AGENT_REGISTRY[DEFAULT_AGENT]
+        routed_to = DEFAULT_AGENT
+
+    # 3) Orquestacion multi-fuente obligatoria (dual repo + tools contextuales)
+    tool_context = await collect_multi_source_context(
+        message=message,
+        empresa_id=empresa_id or "",
+        intent=intent,
+    )
+
+    agent_input = {
+        "message": message,
+        "empresa_id": empresa_id or "",
+        "user_id": user_id or "",
+        "intent": intent,
+        "tool_context": tool_context.get("context_text", ""),
+        "sources_used": tool_context.get("sources_used", []),
+        "dual_repo_checked": tool_context.get("dual_repo_checked", True),
+    }
+
+    # 4) Ejecutar agente especializado
+    try:
+        agent_result = await agent.ainvoke(agent_input)
+    except Exception as e:
+        print(f"RUNNER agent execution error: {e}")
+        agent_result = {
+            "response": f"No pude procesar la solicitud por un error interno: {e}",
+            "model_used": "error",
+            "sources_used": [],
+        }
+
+    response = agent_result.get("response", "No pude procesar tu mensaje.")
+    model_used = agent_result.get("model_used", "unknown")
+
+    # 4.1) Garantiza consulta dual antes de aceptar respuestas tipo "no encontre".
+    if _looks_like_no_data_response(response) and not tool_context.get("dual_repo_checked", False) and empresa_id and message:
+        try:
+            forced_a = search_reports_qdrant(message, empresa_id, limit=2)
+            forced_b = search_vector_store1(message, empresa_id, limit=2)
+            if forced_a:
+                tool_context.setdefault("sources_used", []).append(
+                    {"name": "qdrant_excel_reports", "detail": f"{len(forced_a)} hallazgos (forced)", "confidence": 0.8}
+                )
+            if forced_b:
+                tool_context.setdefault("sources_used", []).append(
+                    {"name": "qdrant_vector_store1", "detail": f"{len(forced_b)} hallazgos (forced)", "confidence": 0.78}
+                )
+            tool_context["dual_repo_checked"] = True
+        except Exception as e:
+            print(f"RUNNER forced dual-check error: {e}")
+
+    # 5) Trazabilidad unificada y BLUF transversal
+    merged_sources = list(tool_context.get("sources_used", [])) + list(agent_result.get("sources_used", []))
+    policy = enforce_response_contract(response=response, sources_used=merged_sources, confidence=confidence)
+    final_response = policy["response"]
+
+    attachment = None
+    attachments = []
+
+    chart_attachment = None
+    should_generate_chart = wants_chart(message)
+    if should_generate_chart:
+        chart = generate_chart_from_text(
+            content=response,
+            title=_build_chart_title(intent=intent, message=message),
+        )
+        if chart.get("ok"):
+            chart_attachment = {
+                "type": "chart",
+                "file_path": chart.get("file_path"),
+                "file_name": chart.get("file_name"),
+                "mime_type": chart.get("mime_type", "image/png"),
+            }
+            _LAST_CHART_BY_USER[_chart_user_key(empresa_id, user_id)] = chart_attachment
+            attachments.append(chart_attachment)
+            print(f"ARTIFACT CHART ok: {chart_attachment.get('file_name')}")
+        else:
+            print(f"ARTIFACT CHART error: {chart.get('error', 'unknown')}")
+            cached_chart = _LAST_CHART_BY_USER.get(_chart_user_key(empresa_id, user_id))
+            if cached_chart and cached_chart.get("file_path"):
+                chart_attachment = cached_chart
+                attachments.append(chart_attachment)
+                print(f"ARTIFACT CHART fallback: {cached_chart.get('file_name')}")
+
+    should_generate_pdf = wants_pdf(message) or _response_suggests_manual_pdf(final_response)
+    if should_generate_pdf:
+        image_paths = [chart_attachment.get("file_path")] if chart_attachment else []
+        pdf = generate_pdf_from_text(
+            content=final_response,
+            title=_build_pdf_title(intent=intent, message=message),
+            image_paths=image_paths,
+        )
+        if pdf.get("ok"):
+            pdf_attachment = {
+                "type": "pdf",
+                "file_path": pdf.get("file_path"),
+                "file_name": pdf.get("file_name"),
+                "mime_type": pdf.get("mime_type", "application/pdf"),
+            }
+            attachments.append(pdf_attachment)
+            attachment = pdf_attachment
+            print(f"ARTIFACT PDF ok: {pdf_attachment.get('file_name')}")
+        else:
+            print(f"ARTIFACT PDF error: {pdf.get('error', 'unknown')}")
+
+    if not attachment and attachments:
+        attachment = attachments[0]
+
+    has_chart = any(a.get("type") == "chart" for a in attachments if isinstance(a, dict))
+    has_pdf = any(a.get("type") == "pdf" for a in attachments if isinstance(a, dict))
+    final_response = _align_response_with_artifacts(final_response, has_chart=has_chart, has_pdf=has_pdf)
+
+    return {
+        "response": final_response,
+        "intent": intent,
+        "confidence": confidence,
+        "routed_to": routed_to,
+        "model_used": model_used,
+        "blocked": False,
+        "dual_repo_checked": tool_context.get("dual_repo_checked", True),
+        "output_mode": output_mode,
+        "traceability": policy["traceability"],
+        "attachment": attachment,
+        "attachments": attachments,
+    }

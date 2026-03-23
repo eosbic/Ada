@@ -24,6 +24,10 @@ from api.mcp_servers.mcp_microsoft365_server import (
     handle_tool_call as m365_handle,
     get_tools as m365_tools,
 )
+from api.mcp_servers.mcp_asana_server import (
+    handle_tool_call as asana_handle,
+    get_tools as asana_tools,
+)
 
 
 # ─── MCP Server Registry ─────────────────────────────────
@@ -31,18 +35,27 @@ from api.mcp_servers.mcp_microsoft365_server import (
 MCP_SERVERS = {
     "notion": {
         "credential_type": "notion",
+        "category": "project_management",
         "tools_fn": notion_tools,
         "handler_fn": notion_handle,
     },
     "plane": {
         "credential_type": "plane",
+        "category": "project_management",
         "tools_fn": plane_tools,
         "handler_fn": plane_handle,
     },
     "microsoft365": {
         "credential_type": "outlook_calendar",
+        "category": "productivity",
         "tools_fn": m365_tools,
         "handler_fn": m365_handle,
+    },
+    "asana": {
+        "credential_type": "asana",
+        "category": "generic_pm",
+        "tools_fn": asana_tools,
+        "handler_fn": asana_handle,
     },
 }
 
@@ -138,11 +151,64 @@ class MCPHost:
             result = await server["handler_fn"](tool_name, arguments, api_key, base_url, workspace)
             print(f"MCP PLANE RESULT: {result}")
 
+        elif server.get("category") == "generic_pm":
+            # PM genéricos reciben credentials dict completo
+            result = await server["handler_fn"](tool_name, arguments, creds)
+
         else:
             return {"error": f"Handler para '{server_name}' no implementado"}
 
         print(f"MCP: {server_name}.{tool_name} → OK")
         return result
+
+    def get_empresa_pm_provider(self, empresa_id: str) -> str:
+        """Retorna nombre del PM server genérico conectado para la empresa, o None."""
+        try:
+            from api.database import sync_engine
+            from sqlalchemy import text as sql_text
+
+            for server_name, server in self.servers.items():
+                if server.get("category") != "generic_pm":
+                    continue
+                with sync_engine.connect() as conn:
+                    result = conn.execute(
+                        sql_text("""
+                            SELECT 1 FROM tenant_credentials
+                            WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
+                            LIMIT 1
+                        """),
+                        {"eid": empresa_id, "provider": server["credential_type"]},
+                    )
+                    if result.fetchone():
+                        return server_name
+        except Exception as e:
+            print(f"MCP get_empresa_pm_provider error: {e}")
+        return None
+
+    async def call_generic_pm_tool(self, tool_name: str, arguments: dict, empresa_id: str) -> Any:
+        """Resuelve qué PM server genérico usar por empresa y ejecuta."""
+        from api.database import sync_engine
+        from sqlalchemy import text as sql_text
+
+        for server_name, server in self.servers.items():
+            if server.get("category") != "generic_pm":
+                continue
+            try:
+                with sync_engine.connect() as conn:
+                    result = conn.execute(
+                        sql_text("""
+                            SELECT 1 FROM tenant_credentials
+                            WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
+                            LIMIT 1
+                        """),
+                        {"eid": empresa_id, "provider": server["credential_type"]},
+                    )
+                    if result.fetchone():
+                        return await self.call_tool(server_name, tool_name, arguments, empresa_id)
+            except Exception as e:
+                print(f"MCP call_generic_pm_tool error for {server_name}: {e}")
+
+        return {"error": "No hay herramienta de proyectos genérica conectada"}
 
     async def call_tool_by_name(self, tool_name: str, arguments: dict, empresa_id: str) -> Any:
         """Busca el server correcto por nombre de tool y ejecuta."""

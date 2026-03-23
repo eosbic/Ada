@@ -44,6 +44,7 @@ def init_qdrant():
                     vectors_config=VectorParams(size=768, distance=Distance.COSINE)
                 )
                 print(f"QDRANT: collection '{col}' created")
+        _ensure_empresa_index(COLLECTION)
         _ensure_empresa_index(REPORTS_COLLECTION)
         _ensure_empresa_index(VECTOR_STORE1_COLLECTION)
         _ensure_empresa_index(IMAGE_REPORTS_COLLECTION)
@@ -66,24 +67,30 @@ def _ensure_empresa_index(collection_name: str):
         print(f"QDRANT: index ensure warning on '{collection_name}': {e}")
 
 
-def search_memory(query):
+def search_memory(query: str, empresa_id: str = "") -> list:
     vector = embeddings.embed_query(query)
+    query_filter = None
+    if empresa_id:
+        query_filter = Filter(
+            must=[FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
+        )
     results = client.query_points(
         collection_name=COLLECTION,
         query=vector,
+        query_filter=query_filter,
         limit=5
     )
     return [r.payload.get("text", "") for r in results.points if r.payload.get("text")]
 
 
-def store_memory(text):
+def store_memory(text: str, empresa_id: str = ""):
     vector = embeddings.embed_query(text)
     client.upsert(
         collection_name=COLLECTION,
         points=[{
             "id": str(uuid.uuid4()),
             "vector": vector,
-            "payload": {"text": text}
+            "payload": {"text": text, "empresa_id": empresa_id}
         }]
     )
 

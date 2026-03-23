@@ -11,7 +11,7 @@ Responsabilidades:
 
 import json
 from typing import Dict, List, Any
-from api.services.tenant_credentials import get_service_credentials
+from api.services.tenant_credentials import get_service_credentials, get_microsoft_credentials
 from api.mcp_servers.mcp_notion_server import (
     handle_tool_call as notion_handle,
     get_tools as notion_tools,
@@ -19,6 +19,10 @@ from api.mcp_servers.mcp_notion_server import (
 from api.mcp_servers.mcp_plane_server import (
     handle_tool_call as plane_handle,
     get_tools as plane_tools,
+)
+from api.mcp_servers.mcp_microsoft365_server import (
+    handle_tool_call as m365_handle,
+    get_tools as m365_tools,
 )
 
 
@@ -35,6 +39,11 @@ MCP_SERVERS = {
         "tools_fn": plane_tools,
         "handler_fn": plane_handle,
     },
+    "microsoft365": {
+        "credential_type": "outlook_calendar",
+        "tools_fn": m365_tools,
+        "handler_fn": m365_handle,
+    },
 }
 
 # Qué MCP servers usar por intent
@@ -43,6 +52,8 @@ INTENT_MCP_MAP = {
     "project": ["plane"],
     "data_query": ["notion"],
     "action": ["notion", "plane"],
+    "calendar": ["microsoft365"],
+    "email": ["microsoft365"],
 }
 
 
@@ -85,13 +96,33 @@ class MCPHost:
             return {"error": f"MCP Server '{server_name}' no registrado"}
 
         server = self.servers[server_name]
-        creds = get_service_credentials(empresa_id, server["credential_type"])
+
+        # Obtener credenciales según el servidor
+        if server_name == "microsoft365":
+            # Determinar provider por tool_name
+            if "calendar" in tool_name:
+                m365_service = "outlook_calendar"
+            elif "email" in tool_name:
+                m365_service = "outlook_email"
+            elif "drive" in tool_name:
+                m365_service = "onedrive"
+            else:
+                m365_service = "outlook_calendar"
+            creds = get_microsoft_credentials(empresa_id, m365_service)
+        else:
+            creds = get_service_credentials(empresa_id, server["credential_type"])
 
         if "error" in creds:
             return creds
 
         # Ejecutar según el servidor
-        if server_name == "notion":
+        if server_name == "microsoft365":
+            access_token = creds.get("access_token", "")
+            if not access_token:
+                return {"error": "Microsoft 365 access_token no encontrado"}
+            result = await server["handler_fn"](tool_name, arguments, access_token)
+
+        elif server_name == "notion":
             api_key = creds.get("api_key", "")
             if not api_key:
                 return {"error": "Notion API key no encontrada"}

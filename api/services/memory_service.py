@@ -260,6 +260,30 @@ def search_reports(query: str, empresa_id: str = "") -> list:
                     if rows:
                         break
 
+            # Nivel 2.5: busqueda fuzzy con pg_trgm (tolerante a typos)
+            if not rows:
+                try:
+                    for word in like_words:
+                        result = conn.execute(
+                            sql_text("""
+                                SELECT title, source_file, markdown_content, alerts, created_at,
+                                       similarity(title, :word) as rank
+                                FROM ada_reports
+                                WHERE empresa_id = :empresa_id
+                                AND is_archived = FALSE
+                                AND (similarity(title, :word) > 0.2 OR similarity(source_file, :word) > 0.2)
+                                ORDER BY rank DESC
+                                LIMIT 3
+                            """),
+                            {"empresa_id": empresa_id, "word": word},
+                        )
+                        rows = result.fetchall()
+                        if rows:
+                            print(f"REPORTS SEARCH: fuzzy '{word}' -> {len(rows)} resultados")
+                            break
+                except Exception as e:
+                    print(f"REPORTS SEARCH pg_trgm error (extension not installed?): {e}")
+
             if not rows:
                 result = conn.execute(
                     sql_text("""

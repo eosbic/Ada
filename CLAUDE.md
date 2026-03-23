@@ -128,13 +128,11 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 
 ## PROBLEMAS CONOCIDOS — NO IGNORAR
 1. `adav2/` es copia legacy, **NO modificar**
-2. `upload.py` usa `.invoke()` sync — migrar a `.ainvoke()`
-3. `_CONVERSATION_HISTORY` en RAM — persistir en PostgreSQL
-4. `_PENDING_APPROVALS` en RAM — persistir en PostgreSQL
-5. Knowledge Graph: `entity_extractor` y `link_weaver` no corren en flujo normal
-6. `budget_limits` verificación parcial
-7. M365 sync wrappers usan `asyncio.run()` — funciona pero no ideal en async context
-8. `provider_router` cache in-memory, se limpia en redeploy
+2. Knowledge Graph: `entity_extractor` y `link_weaver` no corren en flujo normal
+3. `budget_limits` verificación parcial
+4. M365 sync wrappers usan `asyncio.run()` — funciona pero no ideal en async context
+5. `provider_router` cache in-memory, se limpia en redeploy
+6. `notion_agent.py` y `plane_agent.py` son agentes dedicados legacy; `generic_pm_agent` los complementa para nuevos PM tools
 
 ## SEGURIDAD — REGLAS ABSOLUTAS
 - `JWT_SECRET_KEY` en `.env` nunca hardcodeada

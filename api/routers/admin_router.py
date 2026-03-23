@@ -1,0 +1,543 @@
+"""
+Admin Router — CRUD para gestion de clientes beta del portal EOS IA.
+Requiere JWT admin (get_current_admin dependency).
+"""
+
+import json
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+from typing import Optional
+from sqlalchemy import text as sql_text
+from api.database import AsyncSessionLocal
+from api.routers.admin_auth import get_current_admin
+
+
+router = APIRouter()
+
+
+# ─── Helpers ────────────────────────────────────────────
+
+
+async def _audit(admin_id: str, action: str, target_type: str, target_id: str, details: dict, ip: str = ""):
+    """Registra accion en admin_audit_log."""
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                sql_text("""
+                    INSERT INTO admin_audit_log
+                        (admin_user_id, action, target_type, target_id, details, ip_address)
+                    VALUES (:aid, :action, :ttype, :tid, :details, :ip)
+                """),
+                {
+                    "aid": admin_id,
+                    "action": action,
+                    "ttype": target_type,
+                    "tid": target_id,
+                    "details": json.dumps(details, ensure_ascii=False, default=str),
+                    "ip": ip,
+                },
+            )
+            await db.commit()
+    except Exception as e:
+        print(f"ADMIN AUDIT error: {e}")
+
+
+def _get_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+# ─── Request models ────────────────────────────────────
+
+
+class CreateEmpresaRequest(BaseModel):
+    nombre: str
+    sector: str = "generic"
+
+
+class UpdateEmpresaRequest(BaseModel):
+    nombre: Optional[str] = None
+    sector: Optional[str] = None
+
+
+class CreateUsuarioRequest(BaseModel):
+    empresa_id: str
+    email: str
+    nombre: str
+    password: str
+    rol: str = "member"
+
+
+class UpdateBudgetRequest(BaseModel):
+    monthly_limit: float
+
+
+# ─── Endpoints ──────────────────────────────────────────
+
+
+@router.get("/dashboard")
+async def dashboard(admin: dict = Depends(get_current_admin)):
+    """Metricas globales del sistema."""
+    async with AsyncSessionLocal() as db:
+        total_empresas = (await db.execute(sql_text("SELECT COUNT(*) FROM empresas"))).scalar()
+        total_usuarios = (await db.execute(sql_text("SELECT COUNT(*) FROM usuarios"))).scalar()
+
+        reportes_30d = (await db.execute(sql_text(
+            "SELECT COUNT(*) FROM ada_reports WHERE created_at >= NOW() - INTERVAL '30 days'"
+        ))).scalar()
+
+        reportes_total = (await db.execute(sql_text("SELECT COUNT(*) FROM ada_reports"))).scalar()
+
+        creds_activas = (await db.execute(sql_text(
+            "SELECT COUNT(*) FROM tenant_credentials WHERE is_active = TRUE"
+        ))).scalar()
+
+        budget_alerts = (await db.execute(sql_text(
+            "SELECT COUNT(*) FROM budget_limits WHERE alert_sent_this_month = TRUE"
+        ))).scalar()
+
+        empresas_sector = (await db.execute(sql_text(
+            "SELECT sector, COUNT(*) as count FROM empresas GROUP BY sector ORDER BY count DESC LIMIT 10"
+        ))).fetchall()
+
+        admin_logins = (await db.execute(sql_text(
+            "SELECT a.nombre, a.email, a.last_login FROM admin_users a WHERE a.last_login IS NOT NULL ORDER BY a.last_login DESC LIMIT 5"
+        ))).fetchall()
+
+    return {
+        "total_empresas": total_empresas,
+        "total_usuarios": total_usuarios,
+        "reportes_30d": reportes_30d,
+        "reportes_total": reportes_total,
+        "credenciales_activas": creds_activas,
+        "budget_alerts": budget_alerts,
+        "empresas_por_sector": [{"sector": r.sector or "sin_sector", "count": r.count} for r in empresas_sector],
+        "ultimos_logins_admin": [
+            {"nombre": r.nombre, "email": r.email, "last_login": str(r.last_login)}
+            for r in admin_logins
+        ],
+    }
+
+
+@router.get("/empresas")
+async def list_empresas(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    search: str = Query(""),
+    admin: dict = Depends(get_current_admin),
+):
+    """Lista empresas con paginacion y busqueda."""
+    offset = (page - 1) * limit
+
+    search_clause = ""
+    params = {"lim": limit, "off": offset}
+    if search:
+        search_clause = "WHERE e.nombre ILIKE :search OR e.sector ILIKE :search"
+        params["search"] = f"%{search}%"
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(sql_text(f"""
+            SELECT e.id, e.nombre, e.sector, e.created_at,
+                   (SELECT COUNT(*) FROM usuarios u WHERE u.empresa_id = e.id) as user_count,
+                   (SELECT COUNT(*) FROM ada_reports r WHERE r.empresa_id = e.id) as report_count,
+                   (SELECT COUNT(*) FROM tenant_credentials tc WHERE tc.empresa_id = e.id AND tc.is_active = TRUE) as credential_count,
+                   bl.plan_type, bl.monthly_limit, bl.used_this_month, bl.topup_balance
+            FROM empresas e
+            LEFT JOIN budget_limits bl ON bl.empresa_id = e.id
+            {search_clause}
+            ORDER BY e.created_at DESC
+            LIMIT :lim OFFSET :off
+        """), params)).fetchall()
+
+        count_params = {}
+        count_clause = ""
+        if search:
+            count_clause = "WHERE nombre ILIKE :search OR sector ILIKE :search"
+            count_params["search"] = f"%{search}%"
+        total = (await db.execute(sql_text(f"SELECT COUNT(*) FROM empresas {count_clause}"), count_params)).scalar()
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "data": [
+            {
+                "id": str(r.id),
+                "nombre": r.nombre,
+                "sector": r.sector,
+                "created_at": str(r.created_at),
+                "user_count": r.user_count,
+                "report_count": r.report_count,
+                "credential_count": r.credential_count,
+                "plan_type": r.plan_type,
+                "monthly_limit": float(r.monthly_limit or 0),
+                "used_this_month": float(r.used_this_month or 0),
+                "topup_balance": float(r.topup_balance or 0),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/empresas/{empresa_id}")
+async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin)):
+    """Detalle completo de una empresa."""
+    async with AsyncSessionLocal() as db:
+        empresa = (await db.execute(
+            sql_text("SELECT id, nombre, sector, created_at FROM empresas WHERE id = :id"),
+            {"id": empresa_id},
+        )).fetchone()
+
+        if not empresa:
+            raise HTTPException(status_code=404, detail="Empresa no encontrada")
+
+        usuarios = (await db.execute(
+            sql_text("SELECT id, email, nombre, rol, telegram_id, created_at FROM usuarios WHERE empresa_id = :id ORDER BY created_at"),
+            {"id": empresa_id},
+        )).fetchall()
+
+        credentials = (await db.execute(
+            sql_text("SELECT id, provider, is_active, created_at FROM tenant_credentials WHERE empresa_id = :id"),
+            {"id": empresa_id},
+        )).fetchall()
+
+        budget = (await db.execute(
+            sql_text("SELECT plan_type, monthly_limit, used_this_month, total_tokens_this_month, topup_balance, alert_sent_this_month FROM budget_limits WHERE empresa_id = :id"),
+            {"id": empresa_id},
+        )).fetchone()
+
+        profile = (await db.execute(
+            sql_text("SELECT company_name, industry_type, kpis, onboarding_completed FROM ada_company_profile WHERE empresa_id = :id"),
+            {"id": empresa_id},
+        )).fetchone()
+
+        reportes = (await db.execute(
+            sql_text("SELECT id, title, report_type, source_file, generated_by, created_at FROM ada_reports WHERE empresa_id = :id AND is_archived = FALSE ORDER BY created_at DESC LIMIT 10"),
+            {"id": empresa_id},
+        )).fetchall()
+
+    return {
+        "empresa": {
+            "id": str(empresa.id),
+            "nombre": empresa.nombre,
+            "sector": empresa.sector,
+            "created_at": str(empresa.created_at),
+        },
+        "usuarios": [
+            {
+                "id": str(u.id), "email": u.email, "nombre": u.nombre,
+                "rol": u.rol, "has_telegram": bool(u.telegram_id),
+                "created_at": str(u.created_at),
+            }
+            for u in usuarios
+        ],
+        "credentials": [
+            {
+                "id": str(c.id), "provider": c.provider,
+                "is_active": c.is_active, "created_at": str(c.created_at),
+            }
+            for c in credentials
+        ],
+        "budget": {
+            "plan_type": budget.plan_type if budget else None,
+            "monthly_limit": float(budget.monthly_limit or 0) if budget else 0,
+            "used_this_month": float(budget.used_this_month or 0) if budget else 0,
+            "total_tokens_this_month": int(budget.total_tokens_this_month or 0) if budget else 0,
+            "topup_balance": float(budget.topup_balance or 0) if budget else 0,
+            "alert_sent": budget.alert_sent_this_month if budget else False,
+        } if budget else None,
+        "profile": {
+            "company_name": profile.company_name if profile else None,
+            "industry_type": profile.industry_type if profile else None,
+            "kpis": profile.kpis if profile else None,
+            "onboarding_completed": profile.onboarding_completed if profile else False,
+        } if profile else None,
+        "reportes": [
+            {
+                "id": str(r.id), "title": r.title, "report_type": r.report_type,
+                "source_file": r.source_file, "generated_by": r.generated_by,
+                "created_at": str(r.created_at),
+            }
+            for r in reportes
+        ],
+    }
+
+
+@router.post("/empresas")
+async def create_empresa(
+    req: CreateEmpresaRequest,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Crear empresa + budget default."""
+    if admin["role"] not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Permiso insuficiente")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                sql_text("""
+                    INSERT INTO empresas (nombre, sector)
+                    VALUES (:nombre, :sector)
+                    RETURNING id
+                """),
+                {"nombre": req.nombre, "sector": req.sector},
+            )
+            empresa_id = result.fetchone()[0]
+
+            # Budget default
+            await db.execute(
+                sql_text("""
+                    INSERT INTO budget_limits (empresa_id, monthly_limit, plan_type)
+                    VALUES (:eid, 10.0, 'start')
+                    ON CONFLICT (empresa_id) DO NOTHING
+                """),
+                {"eid": empresa_id},
+            )
+            await db.commit()
+
+        await _audit(admin["admin_id"], "create_empresa", "empresa", str(empresa_id),
+                     {"nombre": req.nombre, "sector": req.sector}, _get_ip(request))
+
+        return {"id": str(empresa_id), "nombre": req.nombre, "sector": req.sector}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/empresas/{empresa_id}")
+async def update_empresa(
+    empresa_id: str,
+    req: UpdateEmpresaRequest,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Actualizar nombre/sector de empresa."""
+    updates = {}
+    if req.nombre is not None:
+        updates["nombre"] = req.nombre
+    if req.sector is not None:
+        updates["sector"] = req.sector
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nada que actualizar")
+
+    set_clauses = ", ".join([f"{k} = :{k}" for k in updates])
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            sql_text(f"UPDATE empresas SET {set_clauses} WHERE id = :id"),
+            {**updates, "id": empresa_id},
+        )
+        await db.commit()
+
+    await _audit(admin["admin_id"], "update_empresa", "empresa", empresa_id, updates, _get_ip(request))
+
+    return {"updated": True, **updates}
+
+
+@router.post("/usuarios")
+async def create_usuario(
+    req: CreateUsuarioRequest,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Crear usuario para una empresa."""
+    if admin["role"] not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Permiso insuficiente")
+
+    from api.security import hash_password as hash_pw
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                sql_text("""
+                    INSERT INTO usuarios (empresa_id, email, nombre, password, rol)
+                    VALUES (:eid, :email, :nombre, :password, :rol)
+                    RETURNING id
+                """),
+                {
+                    "eid": req.empresa_id,
+                    "email": req.email.strip().lower(),
+                    "nombre": req.nombre,
+                    "password": hash_pw(req.password),
+                    "rol": req.rol,
+                },
+            )
+            user_id = result.fetchone()[0]
+            await db.commit()
+
+        await _audit(admin["admin_id"], "create_usuario", "usuario", str(user_id),
+                     {"email": req.email, "empresa_id": req.empresa_id}, _get_ip(request))
+
+        return {"id": str(user_id), "email": req.email}
+
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Email ya registrado")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/usuarios/{user_id}")
+async def delete_usuario(
+    user_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Eliminar usuario. Solo superadmin."""
+    if admin["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Solo superadmin puede eliminar usuarios")
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(sql_text("DELETE FROM usuarios WHERE id = :id"), {"id": user_id})
+        await db.commit()
+
+    await _audit(admin["admin_id"], "delete_usuario", "usuario", user_id, {}, _get_ip(request))
+
+    return {"deleted": True}
+
+
+@router.put("/empresas/{empresa_id}/budget")
+async def update_budget(
+    empresa_id: str,
+    req: UpdateBudgetRequest,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Actualizar monthly_limit de una empresa."""
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            sql_text("""
+                INSERT INTO budget_limits (empresa_id, monthly_limit)
+                VALUES (:eid, :limit)
+                ON CONFLICT (empresa_id) DO UPDATE SET monthly_limit = :limit
+            """),
+            {"eid": empresa_id, "limit": req.monthly_limit},
+        )
+        await db.commit()
+
+    await _audit(admin["admin_id"], "update_budget", "empresa", empresa_id,
+                 {"monthly_limit": req.monthly_limit}, _get_ip(request))
+
+    return {"updated": True, "monthly_limit": req.monthly_limit}
+
+
+@router.post("/empresas/{empresa_id}/budget/reset")
+async def reset_budget(
+    empresa_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Reset uso mensual. Solo superadmin."""
+    if admin["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Solo superadmin puede resetear budget")
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            sql_text("""
+                UPDATE budget_limits
+                SET used_this_month = 0, total_tokens_this_month = 0,
+                    topup_balance = 0, alert_sent_this_month = FALSE
+                WHERE empresa_id = :eid
+            """),
+            {"eid": empresa_id},
+        )
+        await db.commit()
+
+    await _audit(admin["admin_id"], "reset_budget", "empresa", empresa_id, {}, _get_ip(request))
+
+    return {"reset": True}
+
+
+@router.get("/empresas/{empresa_id}/credentials")
+async def list_credentials(empresa_id: str, admin: dict = Depends(get_current_admin)):
+    """Lista credenciales sin datos sensibles."""
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            sql_text("""
+                SELECT id, provider, is_active, created_at
+                FROM tenant_credentials
+                WHERE empresa_id = :eid
+                ORDER BY created_at
+            """),
+            {"eid": empresa_id},
+        )).fetchall()
+
+    return [
+        {
+            "id": str(r.id), "provider": r.provider,
+            "is_active": r.is_active, "created_at": str(r.created_at),
+        }
+        for r in rows
+    ]
+
+
+@router.put("/credentials/{cred_id}/toggle")
+async def toggle_credential(
+    cred_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Activar/desactivar credencial."""
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            sql_text("SELECT id, is_active FROM tenant_credentials WHERE id = :id"),
+            {"id": cred_id},
+        )).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Credencial no encontrada")
+
+        new_status = not row.is_active
+        await db.execute(
+            sql_text("UPDATE tenant_credentials SET is_active = :status WHERE id = :id"),
+            {"status": new_status, "id": cred_id},
+        )
+        await db.commit()
+
+    await _audit(admin["admin_id"], "toggle_credential", "credential", cred_id,
+                 {"is_active": new_status}, _get_ip(request))
+
+    return {"id": cred_id, "is_active": new_status}
+
+
+@router.get("/audit-log")
+async def audit_log(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(get_current_admin),
+):
+    """Consulta log de auditoria con paginacion."""
+    offset = (page - 1) * limit
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(sql_text("""
+            SELECT al.id, al.action, al.target_type, al.target_id,
+                   al.details, al.ip_address, al.created_at,
+                   au.email as admin_email, au.nombre as admin_nombre
+            FROM admin_audit_log al
+            JOIN admin_users au ON au.id = al.admin_user_id
+            ORDER BY al.created_at DESC
+            LIMIT :lim OFFSET :off
+        """), {"lim": limit, "off": offset})).fetchall()
+
+        total = (await db.execute(sql_text("SELECT COUNT(*) FROM admin_audit_log"))).scalar()
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "data": [
+            {
+                "id": str(r.id),
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": str(r.target_id) if r.target_id else None,
+                "details": r.details if isinstance(r.details, dict) else {},
+                "ip_address": r.ip_address,
+                "created_at": str(r.created_at),
+                "admin_email": r.admin_email,
+                "admin_nombre": r.admin_nombre,
+            }
+            for r in rows
+        ],
+    }

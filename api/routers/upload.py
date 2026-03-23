@@ -52,7 +52,7 @@ async def upload_file(
 
     try:
         if ext in EXCEL_EXTENSIONS:
-            result = excel_agent.invoke({
+            result = await excel_agent.ainvoke({
                 "file_bytes": contents,
                 "file_name": file_name,
                 "empresa_id": empresa_id,
@@ -71,7 +71,7 @@ async def upload_file(
             }
 
         if ext in DOC_EXTENSIONS:
-            result = document_agent.invoke({
+            result = await document_agent.ainvoke({
                 "file_bytes": contents,
                 "file_name": file_name,
                 "empresa_id": empresa_id,
@@ -89,7 +89,7 @@ async def upload_file(
             }
 
         if ext in IMAGE_EXTENSIONS:
-            result = image_agent.invoke({
+            result = await image_agent.ainvoke({
                 "file_bytes": contents,
                 "file_name": file_name,
                 "mime_type": file.content_type or "",

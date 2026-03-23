@@ -280,20 +280,31 @@ def store_analysis(state: ExcelState) -> dict:
 
     print(f"EXCEL: Reporte de {file_name} guardado en DB + Qdrant")
 
-    # Knowledge Graph pipeline post-store
+    # Knowledge Graph pipeline post-store (thread aislado para evitar conflicto con uvloop)
     if report_id and empresa_id:
         try:
-            import asyncio
+            import threading
             from api.services.auto_tagger import auto_tag_report
             from api.services.entity_extractor import extract_entities
             from api.services.link_weaver import weave_links
 
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(auto_tag_report(report_id, response))
-            entities = loop.run_until_complete(extract_entities(response, alerts))
-            loop.run_until_complete(weave_links(report_id, empresa_id, entities, response))
-            loop.close()
-            print(f"EXCEL: Knowledge Graph pipeline completado para {report_id[:8]}...")
+            def _run_kg_pipeline():
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(auto_tag_report(report_id, response))
+                    ents = loop.run_until_complete(extract_entities(response, alerts))
+                    loop.run_until_complete(weave_links(report_id, empresa_id, ents, response))
+                    print(f"EXCEL: Knowledge Graph pipeline completado para {report_id[:8]}...")
+                except Exception as e:
+                    print(f"EXCEL: KG thread error: {e}")
+                finally:
+                    loop.close()
+
+            kg_thread = threading.Thread(target=_run_kg_pipeline)
+            kg_thread.start()
+            kg_thread.join(timeout=30)
         except Exception as e:
             print(f"EXCEL: Knowledge Graph pipeline error (no bloqueante): {e}")
 
@@ -306,7 +317,7 @@ def store_analysis(state: ExcelState) -> dict:
 
 
 def trigger_briefing(state) -> dict:
-    import asyncio
+    import threading
     from api.agents.briefing_agent import briefing_agent
     response = state.get("response", "")
     alerts = state.get("alerts", [])
@@ -316,18 +327,38 @@ def trigger_briefing(state) -> dict:
     if not alerts and len(response) < 200:
         print("BRIEFING: Sin alertas ni análisis sustancial, saltando")
         return {}
-    try:
+
+    briefing_result_container = [None]
+
+    def _run_briefing_in_thread(state_data):
+        import asyncio
         loop = asyncio.new_event_loop()
-        briefing_result = loop.run_until_complete(briefing_agent.ainvoke({
+        asyncio.set_event_loop(loop)
+        try:
+            briefing_result_container[0] = loop.run_until_complete(
+                briefing_agent.ainvoke(state_data)
+            )
+        except Exception as e:
+            print(f"BRIEFING thread error: {e}")
+        finally:
+            loop.close()
+
+    try:
+        briefing_data = {
             "empresa_id": empresa_id, "user_id": user_id, "trigger": "excel_analysis",
             "analysis": response, "alerts": alerts, "file_name": file_name,
-        }))
-        loop.close()
-        briefing_text = briefing_result.get("response", "")
-        if briefing_text:
-            combined = state.get("response", "") + "\n\n---\n\n## 🧠 BRIEFING PROACTIVO DE ADA\n*Ada cruzó automáticamente tus datos con tu agenda, emails y documentos:*\n\n" + briefing_text
-            print(f"BRIEFING: Proactivo generado exitosamente")
-            return {"response": combined}
+        }
+        thread = threading.Thread(target=_run_briefing_in_thread, args=(briefing_data,))
+        thread.start()
+        thread.join(timeout=30)
+
+        briefing_result = briefing_result_container[0]
+        if briefing_result:
+            briefing_text = briefing_result.get("response", "")
+            if briefing_text:
+                combined = state.get("response", "") + "\n\n---\n\n## BRIEFING PROACTIVO DE ADA\n*Ada cruzo automaticamente tus datos con tu agenda, emails y documentos:*\n\n" + briefing_text
+                print(f"BRIEFING: Proactivo generado exitosamente")
+                return {"response": combined}
     except Exception as e:
         print(f"BRIEFING: Error: {e}")
         import traceback; traceback.print_exc()

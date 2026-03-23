@@ -25,7 +25,8 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 
 - "calendar" -> Agenda, reuniones, citas, horarios
 - "email" -> Correo, emails, enviar, responder
-- "data_query" -> Ventas, cartera, inventario, clientes, metricas, preguntas sobre datos
+- "data_query" -> Dato puntual de UN reporte: "cuanto vendimos ayer", "margen del ultimo reporte", "clientes nuevos esta semana"
+- "data_consolidation" -> Agregar MULTIPLES reportes de un periodo: "reporte anual", "consolidado trimestral", "como fue el año", "tendencias del semestre", "resumen de los ultimos 6 meses", "comparar Q1 vs Q2", "evolucion de ventas 2025"
 - "excel_analysis" -> SOLO si has_file=true y file_type=excel
 - "image_analysis" -> SOLO si has_file=true y file_type=image
 - "notion" -> Buscar/leer/crear en Notion
@@ -35,6 +36,10 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "action" -> Ejecutar accion concreta
 - "briefing" -> Briefing ejecutivo o resumen diario
 - "conversational" -> Saludo, charla casual o pregunta general
+
+DIFERENCIA CLAVE:
+- data_query = consulta sobre dato especifico o reporte individual
+- data_consolidation = analisis que cruza multiples reportes o periodos largos
 
 Default si no estas seguro: "data_query"
 
@@ -46,6 +51,7 @@ INTENT_AGENT_MAP = {
     "calendar": "calendar_agent",
     "email": "email_agent",
     "data_query": "chat_agent",
+    "data_consolidation": "consolidation_agent",
     "excel_analysis": "excel_analyst",
     "image_analysis": "image_analyst",
     "notion": "notion_agent",

@@ -20,6 +20,17 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 FERNET_KEY = os.getenv("FERNET_KEY")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "common")
+
+M365_SCOPES = [
+    "offline_access",
+    "Calendars.ReadWrite",
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "Files.Read.All",
+]
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -133,11 +144,139 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
 
     await db.commit()
 
+    try:
+        from api.services.provider_router import clear_cache
+        clear_cache(empresa_id)
+    except Exception:
+        pass
+
     return {
         "status": "connected",
         "empresa_id": empresa_id,
         "services": services_to_save,
         "message": "Servicios de Google conectados exitosamente.",
+    }
+
+
+@router.get("/microsoft/connect/{service}/{empresa_id}")
+async def get_microsoft_oauth_url(service: str, empresa_id: str):
+    """Genera URL de autorización Azure AD para Microsoft 365."""
+    valid_services = ("outlook", "outlook_calendar", "outlook_email", "onedrive", "microsoft365")
+    if service not in valid_services:
+        raise HTTPException(status_code=400, detail=f"Servicio no válido. Usa: {', '.join(valid_services)}")
+
+    import urllib.parse
+    state = f"{empresa_id}|{service}"
+    params = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "redirect_uri": f"{API_BASE_URL}/oauth/microsoft/callback",
+        "response_type": "code",
+        "scope": " ".join(M365_SCOPES),
+        "state": state,
+        "prompt": "consent",
+    }
+
+    url = f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize?{urllib.parse.urlencode(params)}"
+    return {"auth_url": url, "empresa_id": empresa_id, "service": service}
+
+
+@router.get("/microsoft/callback")
+async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_db)):
+    """Callback OAuth2 Microsoft 365 — intercambia code por tokens."""
+    import httpx
+
+    try:
+        parts = state.split("|")
+        empresa_id = parts[0].strip()
+        service = parts[1].strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="State inválido")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/token",
+            data={
+                "code": code,
+                "client_id": MICROSOFT_CLIENT_ID,
+                "client_secret": MICROSOFT_CLIENT_SECRET,
+                "redirect_uri": f"{API_BASE_URL}/oauth/microsoft/callback",
+                "grant_type": "authorization_code",
+                "scope": " ".join(M365_SCOPES),
+            },
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=f"Error obteniendo tokens M365: {resp.text}")
+
+    token_data = resp.json()
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in", 3600)
+
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="No se obtuvo refresh_token de Microsoft")
+
+    fernet = Fernet(FERNET_KEY.encode())
+    creds = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "client_secret": MICROSOFT_CLIENT_SECRET,
+        "tenant_id": MICROSOFT_TENANT_ID,
+        "access_token": access_token,
+    }
+    encrypted_creds = fernet.encrypt(json.dumps(creds).encode())
+    encrypted_refresh = fernet.encrypt(refresh_token.encode())
+    expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+
+    # Determinar qué providers guardar
+    if service in ("microsoft365", "outlook"):
+        services_to_save = ["outlook_email", "outlook_calendar", "onedrive"]
+    elif service == "outlook_calendar":
+        services_to_save = ["outlook_calendar"]
+    elif service == "outlook_email":
+        services_to_save = ["outlook_email"]
+    elif service == "onedrive":
+        services_to_save = ["onedrive"]
+    else:
+        services_to_save = []
+
+    for svc in services_to_save:
+        await db.execute(
+            text(
+                """
+                INSERT INTO tenant_credentials
+                    (empresa_id, provider, encrypted_data,
+                     oauth2_refresh_token_encrypted, oauth2_expiry, is_active)
+                VALUES (:empresa_id, :provider, :creds, :refresh, :expiry, TRUE)
+                ON CONFLICT (empresa_id, provider)
+                DO UPDATE SET
+                    encrypted_data = EXCLUDED.encrypted_data,
+                    oauth2_refresh_token_encrypted = EXCLUDED.oauth2_refresh_token_encrypted,
+                    oauth2_expiry = EXCLUDED.oauth2_expiry,
+                    is_active = TRUE
+                """
+            ),
+            {
+                "empresa_id": empresa_id,
+                "provider": svc,
+                "creds": encrypted_creds.decode(),
+                "refresh": encrypted_refresh.decode(),
+                "expiry": expiry,
+            },
+        )
+
+    await db.commit()
+
+    try:
+        from api.services.provider_router import clear_cache
+        clear_cache(empresa_id)
+    except Exception:
+        pass
+
+    return {
+        "status": "connected",
+        "empresa_id": empresa_id,
+        "services": services_to_save,
+        "message": "Servicios de Microsoft 365 conectados exitosamente.",
     }
 
 
@@ -167,6 +306,9 @@ async def check_connection_status(empresa_id: str, db: AsyncSession = Depends(ge
         "gmail": services.get("gmail", {"connected": False}),
         "google_calendar": services.get("google_calendar", {"connected": False}),
         "google_drive": services.get("google_drive", {"connected": False}),
+        "outlook_email": services.get("outlook_email", {"connected": False}),
+        "outlook_calendar": services.get("outlook_calendar", {"connected": False}),
+        "onedrive": services.get("onedrive", {"connected": False}),
     }
 
 
@@ -246,7 +388,7 @@ async def list_connections(empresa_id: str, db: AsyncSession = Depends(get_db)):
     for row in rows:
         connections[row.provider] = {"connected": row.is_active, "since": str(row.created_at)[:10]}
 
-    for svc in ["gmail", "google_calendar", "google_drive", "notion", "plane"]:
+    for svc in ["gmail", "google_calendar", "google_drive", "outlook_email", "outlook_calendar", "onedrive", "notion", "plane"]:
         if svc not in connections:
             connections[svc] = {"connected": False}
 

@@ -2,12 +2,13 @@
 Upload Router - endpoint para subir archivos multimodales.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Depends
 from typing import Optional
 
 from api.agents.excel_agent import excel_agent
 from api.agents.document_agent import document_agent
 from api.agents.image_agent import image_agent
+from api.dependencies import get_current_user
 
 router = APIRouter()
 
@@ -21,9 +22,9 @@ MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    empresa_id: str = Form(...),
     instruction: Optional[str] = Form(None),
     industry_type: Optional[str] = Form("generic"),
+    current_user: dict = Depends(get_current_user),
 ):
     file_name = file.filename or "archivo"
     ext = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
@@ -37,6 +38,9 @@ async def upload_file(
     if not contents:
         file.file.seek(0)
         contents = file.file.read()
+
+    empresa_id = current_user["empresa_id"]
+    user_id = current_user["user_id"]
 
     print(f"UPLOAD: {file_name} ({len(contents) // 1024}KB), ext={ext}")
 
@@ -52,7 +56,7 @@ async def upload_file(
                 "file_bytes": contents,
                 "file_name": file_name,
                 "empresa_id": empresa_id,
-                "user_id": "",
+                "user_id": user_id,
                 "user_instruction": instruction or "",
                 "industry_type": industry_type or "generic",
             })
@@ -71,7 +75,7 @@ async def upload_file(
                 "file_bytes": contents,
                 "file_name": file_name,
                 "empresa_id": empresa_id,
-                "user_id": "",
+                "user_id": user_id,
                 "user_instruction": instruction or "",
             })
 
@@ -90,7 +94,7 @@ async def upload_file(
                 "file_name": file_name,
                 "mime_type": file.content_type or "",
                 "empresa_id": empresa_id,
-                "user_id": "",
+                "user_id": user_id,
                 "user_instruction": instruction or "",
             })
 

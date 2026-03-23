@@ -17,6 +17,7 @@ from api.agents.morning_brief_agent import morning_brief_agent
 from api.agents.prospect_pro_agent import prospect_pro_agent
 from api.agents.image_agent import image_agent
 from api.agents.consolidation_agent import consolidation_agent
+from api.agents.generic_pm_agent import generic_pm_agent
 
 from api.services.budget_service import check_budget, get_model_for_plan, log_usage
 from api.services.semantic_firewall import evaluate_semantic_firewall
@@ -42,6 +43,7 @@ AGENT_TASK_MAP = {
     "briefing_agent": "alert_evaluation",
     "morning_brief_agent": "alert_evaluation",
     "consolidation_agent": "excel_analysis",
+    "generic_pm_agent": "chat_with_tools",
 }
 
 
@@ -58,6 +60,7 @@ AGENT_REGISTRY = {
     "briefing_agent": briefing_agent,
     "morning_brief_agent": morning_brief_agent,
     "consolidation_agent": consolidation_agent,
+    "generic_pm_agent": generic_pm_agent,
 }
 
 DEFAULT_AGENT = "chat_agent"
@@ -135,6 +138,55 @@ def _looks_like_no_data_response(text: str) -> bool:
     return any(m in body for m in markers)
 
 
+def _resolve_pm_agent(empresa_id: str, routed_to: str) -> str:
+    """Resuelve qué agente PM usar según credenciales de la empresa."""
+    if routed_to not in ("project_agent", "notion_agent") or not empresa_id:
+        return routed_to
+
+    try:
+        from api.database import sync_engine
+        from sqlalchemy import text as sql_text
+
+        with sync_engine.connect() as conn:
+            result = conn.execute(
+                sql_text("""
+                    SELECT provider FROM tenant_credentials
+                    WHERE empresa_id = :eid
+                      AND provider IN ('plane', 'notion', 'asana', 'monday', 'trello', 'clickup', 'jira')
+                      AND is_active = TRUE
+                """),
+                {"eid": empresa_id},
+            )
+            rows = result.fetchall()
+
+        providers = {row.provider for row in rows}
+
+        if routed_to == "project_agent":
+            if "plane" in providers:
+                return "project_agent"
+            if "notion" in providers:
+                return "notion_agent"
+            generic_providers = providers & {"asana", "monday", "trello", "clickup", "jira"}
+            if generic_providers:
+                return "generic_pm_agent"
+            return routed_to
+
+        if routed_to == "notion_agent":
+            if "notion" in providers:
+                return "notion_agent"
+            if "plane" in providers:
+                return "project_agent"
+            generic_providers = providers & {"asana", "monday", "trello", "clickup", "jira"}
+            if generic_providers:
+                return "generic_pm_agent"
+            return routed_to
+
+    except Exception as e:
+        print(f"RUNNER _resolve_pm_agent error: {e}")
+
+    return routed_to
+
+
 async def run_agent(
     message: str,
     empresa_id: str = None,
@@ -186,6 +238,8 @@ async def run_agent(
     confidence = router_result.get("confidence", 0.0)
 
     print(f"RUNNER: intent={intent}, routed_to={routed_to}, confidence={confidence}")
+
+    routed_to = _resolve_pm_agent(empresa_id, routed_to)
 
     agent = AGENT_REGISTRY.get(routed_to)
     if not agent:

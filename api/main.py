@@ -13,6 +13,8 @@ from api.database import engine
 from api.routers import api_router
 from api.workers.event_worker import worker_loop
 from api.workers.drive_worker import drive_worker_loop
+from api.workers.morning_brief_worker import morning_brief_worker_loop
+from api.workers.alert_worker import alert_worker_loop
 from api.services.memory_service import init_qdrant
 
 
@@ -67,6 +69,8 @@ async def startup_event():
     init_qdrant()
     asyncio.create_task(worker_loop())
     asyncio.create_task(drive_worker_loop())
+    asyncio.create_task(morning_brief_worker_loop())
+    asyncio.create_task(alert_worker_loop())
 
 
 @app.get("/health")

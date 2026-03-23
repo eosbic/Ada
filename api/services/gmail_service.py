@@ -1,5 +1,6 @@
 """
-Gmail Service — Conexión directa a Gmail API.
+Email Service — Conexión a Email API (Gmail / Outlook M365).
+Provider routing automático vía provider_router.
 Referencia: ADA_MIGRACION_V5_PART1.md §4.4
 
 Tools: search, read, draft, send
@@ -7,6 +8,7 @@ Send requiere aprobación humana (human-in-the-loop).
 """
 
 import os
+import asyncio
 import base64
 from typing import Optional, List
 from email.mime.text import MIMEText
@@ -14,6 +16,25 @@ from email.mime.multipart import MIMEMultipart
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+
+
+def _get_provider_family(empresa_id: str) -> str:
+    """Determina familia de provider (google/microsoft) para email."""
+    try:
+        from api.services.provider_router import get_provider
+        _, family = get_provider(empresa_id, "email")
+        return family if family != "none" else "google"
+    except Exception:
+        return "google"
+
+
+def _get_m365_token(empresa_id: str) -> str:
+    """Obtiene access_token de Microsoft 365 para email."""
+    from api.services.tenant_credentials import get_microsoft_credentials
+    creds = get_microsoft_credentials(empresa_id, "outlook_email")
+    if "error" in creds:
+        raise RuntimeError(creds["error"])
+    return creds["access_token"]
 
 
 def _get_gmail_service(empresa_id: str = ""):
@@ -36,6 +57,9 @@ def _get_gmail_service(empresa_id: str = ""):
 
 def gmail_search(query: str, max_results: int = 10, empresa_id: str = "") -> list:
     """Busca emails por query. Retorna lista de {id, from, subject, date, snippet}."""
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_email_search(empresa_id, query, max_results)
+
     try:
         service = _get_gmail_service(empresa_id)
         results = service.users().messages().list(
@@ -70,6 +94,9 @@ def gmail_search(query: str, max_results: int = 10, empresa_id: str = "") -> lis
 
 def gmail_read(message_id: str, empresa_id: str = "") -> dict:
     """Lee contenido completo de un email por ID."""
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_email_read(empresa_id, message_id)
+
     try:
         service = _get_gmail_service(empresa_id)
         msg = service.users().messages().get(
@@ -110,6 +137,9 @@ def gmail_read(message_id: str, empresa_id: str = "") -> dict:
 
 def gmail_draft(to: str, subject: str, body: str, cc: str = "", empresa_id: str = "") -> dict:
     """Crea borrador de email. NO lo envía."""
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_email_draft(empresa_id, to, subject, body, cc)
+
     try:
         service = _get_gmail_service(empresa_id)
 
@@ -141,6 +171,9 @@ def gmail_draft(to: str, subject: str, body: str, cc: str = "", empresa_id: str 
 
 def gmail_send(draft_id: str, empresa_id: str = "") -> dict:
     """Envía un borrador existente. REQUIERE aprobación previa."""
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_email_send(empresa_id, draft_id)
+
     try:
         service = _get_gmail_service(empresa_id)
         result = service.users().drafts().send(
@@ -192,4 +225,46 @@ def gmail_reply(message_id: str, body: str, empresa_id: str = "") -> dict:
 
     except Exception as e:
         print(f"ERROR Gmail reply: {e}")
+        return {"error": str(e)}
+
+
+# ─── Microsoft 365 Sync Wrappers ────────────────────────────
+
+def _m365_email_search(empresa_id: str, query: str, max_results: int = 10) -> list:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_email_search
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_email_search(token, query=query, max_results=max_results))
+    except Exception as e:
+        print(f"ERROR M365 Email search: {e}")
+        return []
+
+
+def _m365_email_read(empresa_id: str, message_id: str) -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_email_read
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_email_read(token, message_id=message_id))
+    except Exception as e:
+        print(f"ERROR M365 Email read: {e}")
+        return {"error": str(e)}
+
+
+def _m365_email_draft(empresa_id: str, to: str, subject: str, body: str, cc: str = "") -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_email_draft
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_email_draft(token, to=to, subject=subject, body=body, cc=cc))
+    except Exception as e:
+        print(f"ERROR M365 Email draft: {e}")
+        return {"error": str(e)}
+
+
+def _m365_email_send(empresa_id: str, draft_id: str) -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_email_send
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_email_send(token, draft_id=draft_id))
+    except Exception as e:
+        print(f"ERROR M365 Email send: {e}")
         return {"error": str(e)}

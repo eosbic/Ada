@@ -338,8 +338,8 @@ async def connect_service(data: dict, db: AsyncSession = Depends(get_db)):
     if not empresa_id or not service:
         raise HTTPException(status_code=400, detail="empresa_id y service son requeridos")
 
-    if service not in ("notion", "plane"):
-        raise HTTPException(status_code=400, detail="Servicio no valido. Usa: notion, plane")
+    if service not in ("notion", "plane", "asana", "monday", "trello", "clickup", "jira"):
+        raise HTTPException(status_code=400, detail="Servicio no valido. Usa: notion, plane, asana, monday, trello, clickup, jira")
 
     api_key = credentials.get("api_key", "")
     if not api_key:
@@ -388,7 +388,7 @@ async def list_connections(empresa_id: str, db: AsyncSession = Depends(get_db)):
     for row in rows:
         connections[row.provider] = {"connected": row.is_active, "since": str(row.created_at)[:10]}
 
-    for svc in ["gmail", "google_calendar", "google_drive", "outlook_email", "outlook_calendar", "onedrive", "notion", "plane"]:
+    for svc in ["gmail", "google_calendar", "google_drive", "outlook_email", "outlook_calendar", "onedrive", "notion", "plane", "asana"]:
         if svc not in connections:
             connections[svc] = {"connected": False}
 

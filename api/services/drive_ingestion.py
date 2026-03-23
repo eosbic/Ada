@@ -1,10 +1,11 @@
 """
-Ingesta automatica de Google Drive -> pipelines de analisis -> Qdrant.
+Ingesta automática de Drive (Google Drive / OneDrive) -> pipelines de analisis -> Qdrant.
 """
 
 import io
 import os
-from typing import List, Dict
+import asyncio
+from typing import List, Dict, Tuple
 
 from sqlalchemy import text
 from google.oauth2.credentials import Credentials
@@ -42,20 +43,21 @@ async def _ensure_state_table():
         await db.commit()
 
 
-async def _list_drive_tenants() -> List[str]:
+async def _list_drive_tenants() -> List[Tuple[str, str]]:
+    """Retorna lista de (empresa_id, provider) con Drive activo."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text(
                 """
-                SELECT DISTINCT empresa_id
+                SELECT DISTINCT empresa_id, provider
                 FROM tenant_credentials
-                WHERE provider = 'google_drive'
+                WHERE provider IN ('google_drive', 'onedrive')
                   AND is_active = TRUE
                 """
             )
         )
         rows = result.fetchall()
-    return [str(r.empresa_id) for r in rows]
+    return [(str(r.empresa_id), r.provider) for r in rows]
 
 
 def _build_drive_service(empresa_id: str):
@@ -124,7 +126,7 @@ def _ext(file_name: str) -> str:
 
 def _dispatch_ingestion(empresa_id: str, file_name: str, file_bytes: bytes):
     ext = _ext(file_name)
-    instruction = "Documento ingerido automaticamente desde Google Drive."
+    instruction = "Documento ingerido automaticamente desde Drive."
 
     if ext in EXCEL_EXTENSIONS:
         return excel_agent.invoke(
@@ -171,9 +173,110 @@ def _dispatch_ingestion(empresa_id: str, file_name: str, file_bytes: bytes):
     return {"status": "skipped", "reason": f"extension_not_supported:{ext}"}
 
 
+def _list_onedrive_files(empresa_id: str, folder_path: str = "") -> List[Dict]:
+    """Lista archivos en OneDrive vía Microsoft Graph."""
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_drive_list
+        from api.services.tenant_credentials import get_microsoft_credentials
+        creds = get_microsoft_credentials(empresa_id, "onedrive")
+        if "error" in creds:
+            print(f"DRIVE INGESTION OneDrive creds error {empresa_id}: {creds['error']}")
+            return []
+        token = creds["access_token"]
+        return asyncio.run(m365_drive_list(token, path=folder_path))
+    except Exception as e:
+        print(f"DRIVE INGESTION OneDrive list error {empresa_id}: {e}")
+        return []
+
+
+def _download_onedrive_file(empresa_id: str, file_id: str) -> bytes:
+    """Descarga archivo de OneDrive vía Microsoft Graph."""
+    import httpx
+    from api.services.tenant_credentials import get_microsoft_credentials
+    creds = get_microsoft_credentials(empresa_id, "onedrive")
+    if "error" in creds:
+        raise RuntimeError(creds["error"])
+    token = creds["access_token"]
+
+    resp = httpx.get(
+        f"https://graph.microsoft.com/v1.0/me/drive/items/{file_id}/content",
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=True,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
+async def _ingest_google_drive(empresa_id: str, folder_id: str):
+    """Ingesta de archivos desde Google Drive."""
+    service, err = _build_drive_service(empresa_id)
+    if err:
+        print(f"DRIVE INGESTION Google {empresa_id}: {err}")
+        return
+
+    try:
+        result = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="files(id,name,modifiedTime,mimeType)",
+            pageSize=30,
+            orderBy="modifiedTime desc",
+        ).execute()
+        files: List[Dict] = result.get("files", [])
+    except Exception as e:
+        print(f"DRIVE INGESTION list error {empresa_id}: {e}")
+        return
+
+    for f in files:
+        file_id = f.get("id", "")
+        file_name = f.get("name", "archivo")
+        modified_time = f.get("modifiedTime", "")
+        if not file_id or not modified_time:
+            continue
+
+        if await _already_processed(empresa_id, file_id, modified_time):
+            continue
+
+        try:
+            blob = _download_file_bytes(service, file_id)
+            _dispatch_ingestion(empresa_id, file_name, blob)
+            await _mark_processed(empresa_id, file_id, file_name, modified_time)
+            print(f"DRIVE INGESTION OK: {empresa_id} -> {file_name}")
+        except Exception as e:
+            print(f"DRIVE INGESTION file error {empresa_id}/{file_name}: {e}")
+
+
+async def _ingest_onedrive(empresa_id: str, folder_path: str):
+    """Ingesta de archivos desde OneDrive."""
+    files = _list_onedrive_files(empresa_id, folder_path)
+
+    for f in files:
+        file_id = f.get("id", "")
+        file_name = f.get("name", "archivo")
+        modified_time = f.get("modified", "")
+        is_folder = f.get("is_folder", False)
+
+        if is_folder or not file_id:
+            continue
+
+        if await _already_processed(empresa_id, file_id, modified_time):
+            continue
+
+        try:
+            blob = _download_onedrive_file(empresa_id, file_id)
+            _dispatch_ingestion(empresa_id, file_name, blob)
+            await _mark_processed(empresa_id, file_id, file_name, modified_time)
+            print(f"DRIVE INGESTION OneDrive OK: {empresa_id} -> {file_name}")
+        except Exception as e:
+            print(f"DRIVE INGESTION OneDrive file error {empresa_id}/{file_name}: {e}")
+
+
 async def run_drive_ingestion_once():
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
-    if not folder_id:
+    folder_id = os.getenv("DRIVE_INGESTION_FOLDER_ID", "") or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+    folder_id = folder_id.strip()
+    onedrive_folder = os.getenv("ONEDRIVE_INGESTION_FOLDER", "").strip()
+
+    if not folder_id and not onedrive_folder:
         return
 
     await _ensure_state_table()
@@ -182,38 +285,8 @@ async def run_drive_ingestion_once():
     if not tenants:
         return
 
-    for empresa_id in tenants:
-        service, err = _build_drive_service(empresa_id)
-        if err:
-            print(f"DRIVE INGESTION {empresa_id}: {err}")
-            continue
-
-        try:
-            result = service.files().list(
-                q=f"'{folder_id}' in parents and trashed = false",
-                fields="files(id,name,modifiedTime,mimeType)",
-                pageSize=30,
-                orderBy="modifiedTime desc",
-            ).execute()
-            files: List[Dict] = result.get("files", [])
-        except Exception as e:
-            print(f"DRIVE INGESTION list error {empresa_id}: {e}")
-            continue
-
-        for f in files:
-            file_id = f.get("id", "")
-            file_name = f.get("name", "archivo")
-            modified_time = f.get("modifiedTime", "")
-            if not file_id or not modified_time:
-                continue
-
-            if await _already_processed(empresa_id, file_id, modified_time):
-                continue
-
-            try:
-                blob = _download_file_bytes(service, file_id)
-                _dispatch_ingestion(empresa_id, file_name, blob)
-                await _mark_processed(empresa_id, file_id, file_name, modified_time)
-                print(f"DRIVE INGESTION OK: {empresa_id} -> {file_name}")
-            except Exception as e:
-                print(f"DRIVE INGESTION file error {empresa_id}/{file_name}: {e}")
+    for empresa_id, provider in tenants:
+        if provider == "google_drive" and folder_id:
+            await _ingest_google_drive(empresa_id, folder_id)
+        elif provider == "onedrive" and onedrive_folder:
+            await _ingest_onedrive(empresa_id, onedrive_folder)

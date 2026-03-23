@@ -203,6 +203,7 @@ def store_consolidated_report(state: ConsolidationState) -> dict:
     if not response or not empresa_id or report_count == 0:
         return {}
 
+    report_id = None
     title = f"Consolidado {period_start} a {period_end} ({report_count} reportes)"
     model_used = state.get("model_used", "unknown")
 
@@ -218,7 +219,7 @@ def store_consolidated_report(state: ConsolidationState) -> dict:
         from sqlalchemy import text as sql_text
 
         with sync_engine.connect() as conn:
-            conn.execute(
+            result = conn.execute(
                 sql_text("""
                     INSERT INTO ada_reports
                         (empresa_id, title, report_type, source_file,
@@ -228,6 +229,7 @@ def store_consolidated_report(state: ConsolidationState) -> dict:
                         (:eid, :title, 'consolidated_analysis', :source,
                          :markdown, :metrics, :generated_by,
                          FALSE, :roles)
+                    RETURNING id
                 """),
                 {
                     "eid": empresa_id,
@@ -239,8 +241,15 @@ def store_consolidated_report(state: ConsolidationState) -> dict:
                     "roles": ["administrador", "gerente", "analista"],
                 }
             )
+            row = result.fetchone()
+            if row:
+                report_id = str(row[0])
             conn.commit()
-        print(f"CONSOLIDATION: Reporte consolidado guardado en ada_reports")
+        print(f"CONSOLIDATION: Reporte consolidado guardado en ada_reports → {report_id}")
+
+        if report_id and empresa_id:
+            from api.services.kg_pipeline import run_kg_pipeline
+            run_kg_pipeline(report_id, empresa_id, response, "")
     except Exception as e:
         print(f"CONSOLIDATION: Error guardando en DB: {e}")
 

@@ -2,6 +2,7 @@
 Chat Agent - RAG multi-fuente + trazabilidad estricta.
 """
 
+import json
 import re
 from typing import TypedDict, Optional, List, Dict
 from langgraph.graph import StateGraph, END
@@ -16,7 +17,52 @@ from api.services.memory_service import (
     search_vector_store1,
 )
 from api.services.context_builder import build_personalized_context
-from api.database import AsyncSessionLocal
+from api.database import AsyncSessionLocal, sync_engine
+
+
+def get_history(empresa_id: str, user_id: str) -> list:
+    """Obtiene historial de conversacion desde PostgreSQL."""
+    if not empresa_id or not user_id:
+        return []
+    try:
+        with sync_engine.connect() as conn:
+            row = conn.execute(
+                sql_text("""
+                    SELECT messages FROM conversation_history
+                    WHERE empresa_id = :eid AND user_id = :uid
+                """),
+                {"eid": empresa_id, "uid": user_id}
+            ).fetchone()
+            if row and row.messages:
+                msgs = row.messages if isinstance(row.messages, list) else json.loads(row.messages)
+                return msgs
+    except Exception as e:
+        print(f"CHAT: Error leyendo historial: {e}")
+    return []
+
+
+def save_history(empresa_id: str, user_id: str, messages: list, max_turns: int = 8) -> None:
+    """Guarda historial de conversacion en PostgreSQL via UPSERT."""
+    if not empresa_id or not user_id:
+        return
+    try:
+        # Truncar a max_turns*2 mensajes (cada turno = user + assistant)
+        truncated = messages[-(max_turns * 2):]
+        messages_json = json.dumps(truncated, ensure_ascii=False)
+
+        with sync_engine.connect() as conn:
+            conn.execute(
+                sql_text("""
+                    INSERT INTO conversation_history (empresa_id, user_id, messages, max_turns, updated_at)
+                    VALUES (:eid, :uid, :msgs::jsonb, :max_turns, NOW())
+                    ON CONFLICT (empresa_id, user_id)
+                    DO UPDATE SET messages = :msgs::jsonb, updated_at = NOW()
+                """),
+                {"eid": empresa_id, "uid": user_id, "msgs": messages_json, "max_turns": max_turns}
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"CHAT: Error guardando historial: {e}")
 
 
 class ChatState(TypedDict, total=False):
@@ -142,8 +188,13 @@ async def retrieve_context(state: ChatState) -> dict:
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
 
-    memories = search_memory(message)
+    user_id = state.get("user_id", "")
+
+    memories = search_memory(message, empresa_id)
     reports_sql = search_reports(message, empresa_id) if empresa_id else []
+
+    # Historial conversacional persistente
+    history = get_history(empresa_id, user_id) if (empresa_id and user_id) else []
 
     # consulta dual obligatoria
     try:
@@ -206,6 +257,15 @@ async def retrieve_context(state: ChatState) -> dict:
     if memories:
         context_chunks.append("## Memoria conversacional\n" + "\n\n".join(memories[:4]))
         sources_used.append({"name": "agent_memory", "detail": f"{len(memories)} hallazgos", "confidence": 0.65})
+
+    if history:
+        history_lines = []
+        for msg in history[-8:]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")[:300]
+            history_lines.append(f"**{role}:** {content}")
+        context_chunks.append("## Historial reciente\n" + "\n".join(history_lines))
+        sources_used.append({"name": "conversation_history", "detail": f"{len(history)} mensajes", "confidence": 0.70})
 
     if reports_sql:
         context_chunks.append("## PostgreSQL reports\n" + "\n\n".join(reports_sql[:3]))
@@ -294,10 +354,26 @@ async def generate_response(state: ChatState) -> dict:
 async def save_to_memory(state: ChatState) -> dict:
     message = state.get("message", "")
     response = state.get("response", "")
+    empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
+
     if message:
-        store_memory(f"Usuario: {message}")
+        store_memory(f"Usuario: {message}", empresa_id=empresa_id)
     if response:
-        store_memory(f"Ada: {response[:1800]}")
+        store_memory(f"Ada: {response[:1800]}", empresa_id=empresa_id)
+
+    # Persistir historial en PostgreSQL
+    if empresa_id and user_id and message:
+        try:
+            history = get_history(empresa_id, user_id)
+            if message:
+                history.append({"role": "user", "content": message})
+            if response:
+                history.append({"role": "assistant", "content": response[:2000]})
+            save_history(empresa_id, user_id, history)
+        except Exception as e:
+            print(f"CHAT: Error persistiendo historial: {e}")
+
     return {}
 
 

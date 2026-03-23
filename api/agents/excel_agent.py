@@ -279,6 +279,24 @@ def store_analysis(state: ExcelState) -> dict:
     )
 
     print(f"EXCEL: Reporte de {file_name} guardado en DB + Qdrant")
+
+    # Knowledge Graph pipeline post-store
+    if report_id and empresa_id:
+        try:
+            import asyncio
+            from api.services.auto_tagger import auto_tag_report
+            from api.services.entity_extractor import extract_entities
+            from api.services.link_weaver import weave_links
+
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(auto_tag_report(report_id, response))
+            entities = loop.run_until_complete(extract_entities(response, alerts))
+            loop.run_until_complete(weave_links(report_id, empresa_id, entities, response))
+            loop.close()
+            print(f"EXCEL: Knowledge Graph pipeline completado para {report_id[:8]}...")
+        except Exception as e:
+            print(f"EXCEL: Knowledge Graph pipeline error (no bloqueante): {e}")
+
     return {
         "sources_used": [
             {"name": "excel_pipeline", "detail": file_name, "confidence": 0.9},

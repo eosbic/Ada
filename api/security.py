@@ -1,9 +1,13 @@
+import os
+
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
-SECRET_KEY = "9d4c8c1f5a7b6e3d2f9a0c4b7e8d1f6a9c2e3b4d5f6a7c8e9d0b1c2a3d4e5f6"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

@@ -10,6 +10,7 @@ from . import onboarding_router
 from . import oauth
 from . import reports
 from . import dashboard
+from . import budget_router
 
 
 api_router = APIRouter()
@@ -86,4 +87,10 @@ api_router.include_router(
     reports.router,
     prefix="/api/v1",
     tags=["Reports"]
+)
+
+api_router.include_router(
+    budget_router.router,
+    prefix="/admin/api/budget",
+    tags=["Budget"]
 )

@@ -280,33 +280,11 @@ def store_analysis(state: ExcelState) -> dict:
 
     print(f"EXCEL: Reporte de {file_name} guardado en DB + Qdrant")
 
-    # Knowledge Graph pipeline post-store (thread aislado para evitar conflicto con uvloop)
+    # Knowledge Graph pipeline post-store
     if report_id and empresa_id:
-        try:
-            import threading
-            from api.services.auto_tagger import auto_tag_report
-            from api.services.entity_extractor import extract_entities
-            from api.services.link_weaver import weave_links
-
-            def _run_kg_pipeline():
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(auto_tag_report(report_id, response))
-                    ents = loop.run_until_complete(extract_entities(response, alerts))
-                    loop.run_until_complete(weave_links(report_id, empresa_id, ents, response))
-                    print(f"EXCEL: Knowledge Graph pipeline completado para {report_id[:8]}...")
-                except Exception as e:
-                    print(f"EXCEL: KG thread error: {e}")
-                finally:
-                    loop.close()
-
-            kg_thread = threading.Thread(target=_run_kg_pipeline)
-            kg_thread.start()
-            kg_thread.join(timeout=30)
-        except Exception as e:
-            print(f"EXCEL: Knowledge Graph pipeline error (no bloqueante): {e}")
+        from api.services.kg_pipeline import run_kg_pipeline
+        alerts_text = "\n".join([a.get("message", "") for a in alerts])
+        run_kg_pipeline(report_id, empresa_id, response, alerts_text)
 
     return {
         "sources_used": [

@@ -25,7 +25,8 @@ api/agents/                              → Agentes LangGraph (16 agentes)
 api/services/                            → Lógica de negocio y servicios
 api/services/agent_runner.py             → Orquestador: Router → Agente
 api/services/provider_router.py          → Decide Google vs Microsoft por tenant
-api/workers/                             → Background workers
+api/workers/                             → Background workers (event, drive, morning_brief, alert)
+api/services/kg_pipeline.py              → Knowledge Graph pipeline reutilizable
 api/mcp_servers/mcp_host.py              → Orquestador MCP (Notion, Plane, M365)
 api/mcp_servers/mcp_microsoft365_server.py → Microsoft Graph API
 models/selector.py                       → ModelSelector con fallback chains
@@ -125,14 +126,26 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `artifact_service.py` — PDFs
 - `chart_service.py`
 - `industry_protocols.py`
+- `kg_pipeline.py` — Helper reutilizable: `run_kg_pipeline(report_id, empresa_id, content, alerts)`. Threading aislado.
+
+## Workers (en `api/workers/`)
+- `event_worker` — Procesa eventos async
+- `drive_worker` — Ingesta automática Google Drive / OneDrive
+- `morning_brief_worker` — Cron diario (`MORNING_BRIEF_HOUR`, default 7am Colombia). Envía briefing por Telegram a admins.
+- `alert_worker` — Cron cada 5min (`ALERT_CHECK_INTERVAL_SECONDS`). Evalúa `ada_reports` con `requires_action=TRUE`.
+
+### Variables `.env` para workers
+- `ENABLE_MORNING_BRIEF` (default `"false"`)
+- `MORNING_BRIEF_HOUR` (default `"7"`)
+- `ENABLE_ALERT_WORKER` (default `"false"`)
+- `ALERT_CHECK_INTERVAL_SECONDS` (default `"300"`)
 
 ## PROBLEMAS CONOCIDOS — NO IGNORAR
-1. `adav2/` es copia legacy, **NO modificar**
-2. Knowledge Graph: `entity_extractor` y `link_weaver` no corren en flujo normal
-3. `budget_limits` verificación parcial
-4. M365 sync wrappers usan `asyncio.run()` — funciona pero no ideal en async context
-5. `provider_router` cache in-memory, se limpia en redeploy
-6. `notion_agent.py` y `plane_agent.py` son agentes dedicados legacy; `generic_pm_agent` los complementa para nuevos PM tools
+1. Knowledge Graph: pipeline conectado en excel, document, prospect, briefing y consolidation agents. Falta: `chat_agent` (no produce reportes), `morning_brief_agent` (consume pero no produce datos persistentes).
+2. `budget_limits` verificación parcial
+3. M365 sync wrappers usan `asyncio.run()` — funciona pero no ideal en async context
+4. `provider_router` cache in-memory, se limpia en redeploy
+5. `notion_agent.py` y `plane_agent.py` son agentes dedicados legacy; `generic_pm_agent` los complementa para nuevos PM tools
 
 ## SEGURIDAD — REGLAS ABSOLUTAS
 - `JWT_SECRET_KEY` en `.env` nunca hardcodeada

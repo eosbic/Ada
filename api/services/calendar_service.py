@@ -1,14 +1,35 @@
 """
-Calendar Service — Conexión directa a Google Calendar API.
-Multi-tenant: cada empresa usa SU Google Calendar.
+Calendar Service — Conexión a Calendar API (Google / Microsoft 365).
+Provider routing automático vía provider_router.
+Multi-tenant: cada empresa usa SU Calendar.
 """
 
 import os
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+
+
+def _get_provider_family(empresa_id: str) -> str:
+    """Determina familia de provider (google/microsoft) para calendar."""
+    try:
+        from api.services.provider_router import get_provider
+        _, family = get_provider(empresa_id, "calendar")
+        return family if family != "none" else "google"
+    except Exception:
+        return "google"
+
+
+def _get_m365_token(empresa_id: str) -> str:
+    """Obtiene access_token de Microsoft 365 para calendar."""
+    from api.services.tenant_credentials import get_microsoft_credentials
+    creds = get_microsoft_credentials(empresa_id, "outlook_calendar")
+    if "error" in creds:
+        raise RuntimeError(creds["error"])
+    return creds["access_token"]
 
 
 def _get_calendar_service(empresa_id: str = ""):
@@ -30,6 +51,9 @@ def calendar_list_events(
     calendar_id: str = "primary",
     empresa_id: str = "",
 ) -> list:
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_calendar_list(empresa_id, days_ahead, max_results)
+
     try:
         service = _get_calendar_service(empresa_id)
 
@@ -75,6 +99,9 @@ def calendar_search_events(
     calendar_id: str = "primary",
     empresa_id: str = "",
 ) -> list:
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_calendar_search(empresa_id, query, days_ahead)
+
     try:
         service = _get_calendar_service(empresa_id)
 
@@ -121,6 +148,9 @@ def calendar_create_event(
     timezone: str = "America/Bogota",
     empresa_id: str = "",
 ) -> dict:
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_calendar_create(empresa_id, summary, start_datetime, end_datetime, description, location, attendees, timezone)
+
     try:
         service = _get_calendar_service(empresa_id)
 
@@ -166,6 +196,9 @@ def calendar_update_event(
     timezone: str = "America/Bogota",
     empresa_id: str = "",
 ) -> dict:
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_calendar_update(empresa_id, event_id, summary, start_datetime, end_datetime, description, location, timezone)
+
     try:
         service = _get_calendar_service(empresa_id)
 
@@ -205,6 +238,9 @@ def calendar_delete_event(
     calendar_id: str = "primary",
     empresa_id: str = "",
 ) -> dict:
+    if _get_provider_family(empresa_id) == "microsoft":
+        return _m365_calendar_delete(empresa_id, event_id)
+
     try:
         service = _get_calendar_service(empresa_id)
         service.events().delete(
@@ -244,3 +280,72 @@ def calendar_get_availability(
         "total_events": len(busy_slots),
         "message": f"Tienes {len(busy_slots)} eventos en los próximos {days_ahead} días.",
     }
+
+
+# ─── Microsoft 365 Sync Wrappers ────────────────────────────
+
+def _m365_calendar_list(empresa_id: str, days_ahead: int = 7, max_results: int = 20) -> list:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_calendar_list
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_calendar_list(token, days_ahead=days_ahead, max_results=max_results))
+    except Exception as e:
+        print(f"ERROR M365 Calendar list: {e}")
+        return []
+
+
+def _m365_calendar_search(empresa_id: str, query: str, days_ahead: int = 30) -> list:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_calendar_search
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_calendar_search(token, query=query, days_ahead=days_ahead))
+    except Exception as e:
+        print(f"ERROR M365 Calendar search: {e}")
+        return []
+
+
+def _m365_calendar_create(
+    empresa_id: str, summary: str, start_datetime: str, end_datetime: str,
+    description: str = "", location: str = "", attendees: list = None,
+    timezone: str = "America/Bogota",
+) -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_calendar_create
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_calendar_create(
+            token, summary=summary, start_datetime=start_datetime,
+            end_datetime=end_datetime, description=description,
+            location=location, attendees=attendees, timezone=timezone,
+        ))
+    except Exception as e:
+        print(f"ERROR M365 Calendar create: {e}")
+        return {"error": str(e)}
+
+
+def _m365_calendar_update(
+    empresa_id: str, event_id: str, summary: str = None,
+    start_datetime: str = None, end_datetime: str = None,
+    description: str = None, location: str = None,
+    timezone: str = "America/Bogota",
+) -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_calendar_update
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_calendar_update(
+            token, event_id=event_id, summary=summary,
+            start_datetime=start_datetime, end_datetime=end_datetime,
+            description=description, location=location, timezone=timezone,
+        ))
+    except Exception as e:
+        print(f"ERROR M365 Calendar update: {e}")
+        return {"error": str(e)}
+
+
+def _m365_calendar_delete(empresa_id: str, event_id: str) -> dict:
+    try:
+        from api.mcp_servers.mcp_microsoft365_server import m365_calendar_delete
+        token = _get_m365_token(empresa_id)
+        return asyncio.run(m365_calendar_delete(token, event_id=event_id))
+    except Exception as e:
+        print(f"ERROR M365 Calendar delete: {e}")
+        return {"error": str(e)}

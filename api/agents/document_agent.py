@@ -206,7 +206,7 @@ def store_doc_analysis(state: DocState) -> dict:
         print(f"DOC AGENT db error: {e}")
 
     header = f"[Documento: {file_name} | Empresa: {empresa_id}]"
-    store_memory(f"{header}\nRESUMEN:\n{response[:1500]}")
+    store_memory(f"{header}\nRESUMEN:\n{response[:1500]}", empresa_id=empresa_id)
 
     # dual-store policy
     analysis_text = f"{header}\n{response[:2500]}"

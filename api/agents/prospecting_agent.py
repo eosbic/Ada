@@ -58,7 +58,8 @@ una reunión comercial, hacer seguimiento, o evaluar una oportunidad.
 async def search_prospect_info(state: ProspectingState) -> dict:
     """Busca info del prospecto en Qdrant."""
     message = state.get("message", "")
-    memories = search_memory(message)
+    empresa_id = state.get("empresa_id", "")
+    memories = search_memory(message, empresa_id=empresa_id)
 
     context = "\n".join(memories) if memories else "Sin información previa de este prospecto."
 
@@ -80,8 +81,9 @@ async def generate_prospect_profile(state: ProspectingState) -> dict:
     ])
 
     # Guardar en memoria para futuras consultas
-    store_memory(f"Prospecting: {state['message']}")
-    store_memory(f"Ada perfil: {response.content[:500]}")
+    empresa_id = state.get("empresa_id", "")
+    store_memory(f"Prospecting: {state['message']}", empresa_id=empresa_id)
+    store_memory(f"Ada perfil: {response.content[:500]}", empresa_id=empresa_id)
 
     print(f"PROSPECTING: Perfil generado con {model_name}")
 

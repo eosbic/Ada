@@ -247,7 +247,7 @@ def store_consolidated_report(state: ConsolidationState) -> dict:
     # Guardar resumen en Qdrant
     try:
         header = f"[Consolidado: {period_start} a {period_end} | {report_count} reportes | Empresa: {empresa_id}]"
-        store_memory(f"{header}\n{response[:1500]}")
+        store_memory(f"{header}\n{response[:1500]}", empresa_id=empresa_id)
     except Exception as e:
         print(f"CONSOLIDATION: Error guardando en Qdrant: {e}")
 

@@ -128,7 +128,8 @@ async def extract_prospect_info(state: ProspectState) -> dict:
 
     # Buscar en memoria si ya tenemos info de este prospecto
     search_terms = prospect_data.get("empresa", "") or prospect_data.get("nombre_contacto", "")
-    memories = search_memory(search_terms) if search_terms else []
+    empresa_id = state.get("empresa_id", "")
+    memories = search_memory(search_terms, empresa_id=empresa_id) if search_terms else []
     memory_context = "\n".join(memories) if memories else "Sin historial previo."
 
     missing = prospect_data.get("missing", [])
@@ -195,8 +196,9 @@ async def generate_profile_or_ask(state: ProspectState) -> dict:
 
     # Guardar perfil en memoria para futuras consultas
     empresa_name = prospect_data.get("empresa", "prospecto")
-    store_memory(f"Perfil prospecto {empresa_name}: {response.content[:1000]}")
-    store_memory(f"Datos prospecto {empresa_name}: {json.dumps(prospect_data, ensure_ascii=False)}")
+    empresa_id = state.get("empresa_id", "")
+    store_memory(f"Perfil prospecto {empresa_name}: {response.content[:1000]}", empresa_id=empresa_id)
+    store_memory(f"Datos prospecto {empresa_name}: {json.dumps(prospect_data, ensure_ascii=False)}", empresa_id=empresa_id)
 
     # Guardar en ada_reports
     try:

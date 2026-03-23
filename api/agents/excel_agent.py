@@ -244,16 +244,16 @@ def store_analysis(state: ExcelState) -> dict:
         print(f"ERROR guardando en ada_reports: {e}")
         import traceback; traceback.print_exc()
     header = f"[Reporte: {file_name} | Empresa: {empresa_id}]"
-    store_memory(f"{header}\nRESUMEN:\n{response[:1500]}")
+    store_memory(f"{header}\nRESUMEN:\n{response[:1500]}", empresa_id=empresa_id)
     if metrics_summary:
         metrics_text = f"{header}\nMÉTRICAS:\n"
         for k, v in metrics_summary.items(): metrics_text += f"- {k}: {v}\n"
-        store_memory(metrics_text)
+        store_memory(metrics_text, empresa_id=empresa_id)
     if alerts_json:
         alerts_text = f"{header}\nALERTAS:\n"
         for a in alerts_json: alerts_text += f"- [{a['level']}] {a['message']}\n"
-        store_memory(alerts_text)
-    store_memory(f"{header}\nArchivo '{file_name}' analizado. Tipo: {industry_type}. Alertas: {len(alerts_json)}. ID reporte: {report_id}")
+        store_memory(alerts_text, empresa_id=empresa_id)
+    store_memory(f"{header}\nArchivo '{file_name}' analizado. Tipo: {industry_type}. Alertas: {len(alerts_json)}. ID reporte: {report_id}", empresa_id=empresa_id)
 
     # Semantic tagging enriquecido y doble almacenamiento vectorial
     tags = semantic_tag_document(response[:12000], file_name)

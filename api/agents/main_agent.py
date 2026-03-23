@@ -16,6 +16,7 @@ model = ChatGoogleGenerativeAI(
 class AgentState(TypedDict, total=False):
 
     message: str
+    empresa_id: str
     response: str
     context: str
 
@@ -27,7 +28,8 @@ def call_model(state: AgentState):
     if not message:
         return {"response": "No message provided"}
 
-    memories = search_memory(message)
+    empresa_id = state.get("empresa_id", "")
+    memories = search_memory(message, empresa_id=empresa_id)
     print(f"MEMORIA ENCONTRADA ({len(memories)} resultados):", memories)
 
     context = "\n".join(memories) if memories else "Sin contexto previo."
@@ -43,8 +45,8 @@ Usuario:
 
     response = model.invoke(prompt)
 
-    store_memory(f"Usuario: {message}")
-    store_memory(f"Ada: {response.content}")
+    store_memory(f"Usuario: {message}", empresa_id=empresa_id)
+    store_memory(f"Ada: {response.content}", empresa_id=empresa_id)
 
     return {
         "response": response.content

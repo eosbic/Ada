@@ -7,6 +7,7 @@ Acciones: invite, list, update, remove
 """
 
 import json
+import secrets
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from models.selector import selector
@@ -253,7 +254,7 @@ def _invite_member(empresa_id: str, admin_user_id: str, params: dict) -> dict:
                 user_id = existing.id
             else:
                 # Crear usuario
-                temp_password = f"Ada{nombre.split()[0] if nombre.split() else 'User'}2026!"
+                temp_password = secrets.token_urlsafe(12)
                 result = conn.execute(
                     sql_text("""
                         INSERT INTO usuarios (empresa_id, email, nombre, password, rol)

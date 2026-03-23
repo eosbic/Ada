@@ -142,9 +142,10 @@ def store_doc_analysis(state: DocState) -> dict:
         "semantic_tags": semantic_tags,
     }
 
+    report_id = None
     try:
         with sync_engine.connect() as conn:
-            conn.execute(
+            result = conn.execute(
                 sql_text(
                     """
                     INSERT INTO ada_reports
@@ -155,6 +156,7 @@ def store_doc_analysis(state: DocState) -> dict:
                         (:empresa_id, :title, :report_type, :source_file,
                          :markdown, :metrics, :alerts,
                          :generated_by, :roles)
+                    RETURNING id
                     """
                 ),
                 {
@@ -169,6 +171,9 @@ def store_doc_analysis(state: DocState) -> dict:
                     "roles": ["administrador", "gerente", "analista"],
                 },
             )
+            row = result.fetchone()
+            if row:
+                report_id = str(row[0])
 
             if text_content:
                 raw_enriched = {
@@ -240,6 +245,10 @@ def store_doc_analysis(state: DocState) -> dict:
             doc_type=f"{doc_type}_raw",
             metadata={"origin": "raw_content", "metadata": metadata},
         )
+
+    if report_id and empresa_id:
+        from api.services.kg_pipeline import run_kg_pipeline
+        run_kg_pipeline(report_id, empresa_id, response, "")
 
     return {}
 

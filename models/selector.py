@@ -88,13 +88,24 @@ class ModelSelector:
     def __init__(self):
         self._cache = {}
 
-    def get_model(self, task: str, user_preference: str = None) -> Tuple:
-        """Devuelve (instancia_modelo, nombre_modelo) para una tarea."""
-        name = (
-            user_preference
-            if user_preference in self.MODEL_CONFIGS
-            else self.TASK_DEFAULTS.get(task, "gemini-flash")
-        )
+    # Tier de costo por modelo
+    COST_TIERS = {
+        "gemini-flash": "free",
+        "qwen-72b": "low",
+        "sonnet": "medium",
+        "opus": "high",
+    }
+
+    def get_model(self, task: str, user_preference: str = None, budget_override: str = None) -> Tuple:
+        """Devuelve (instancia_modelo, nombre_modelo) para una tarea.
+        Prioridad: budget_override > user_preference > task default.
+        """
+        if budget_override and budget_override in self.MODEL_CONFIGS:
+            name = budget_override
+        elif user_preference and user_preference in self.MODEL_CONFIGS:
+            name = user_preference
+        else:
+            name = self.TASK_DEFAULTS.get(task, "gemini-flash")
         return self._get_instance(name), name
 
     def _get_instance(self, name: str):
@@ -106,9 +117,13 @@ class ModelSelector:
             self._cache[name] = cfg["class"](**cfg["params"])
         return self._cache[name]
 
-    async def get_with_fallback(self, task: str, user_pref: str = None):
+    def get_model_cost_tier(self, model_name: str) -> str:
+        """Retorna el tier de costo del modelo: free/low/medium/high."""
+        return self.COST_TIERS.get(model_name, "low")
+
+    async def get_with_fallback(self, task: str, user_pref: str = None, budget_override: str = None):
         """Intenta modelo preferido. Si falla, recorre fallback chain."""
-        name = user_pref or self.TASK_DEFAULTS.get(task, "gemini-flash")
+        name = budget_override or user_pref or self.TASK_DEFAULTS.get(task, "gemini-flash")
         chain = [name] + self.FALLBACK_CHAIN.get(name, [])
 
         last_error = None

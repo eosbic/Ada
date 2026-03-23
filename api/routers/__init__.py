@@ -12,6 +12,8 @@ from . import reports
 from . import dashboard
 from . import budget_router
 from . import consolidation_router
+from . import admin_auth
+from . import admin_router
 
 
 api_router = APIRouter()
@@ -100,4 +102,16 @@ api_router.include_router(
     consolidation_router.router,
     prefix="/api/v1",
     tags=["Consolidation"]
+)
+
+api_router.include_router(
+    admin_auth.router,
+    prefix="/admin/auth",
+    tags=["Admin Auth"]
+)
+
+api_router.include_router(
+    admin_router.router,
+    prefix="/admin/api",
+    tags=["Admin"]
 )

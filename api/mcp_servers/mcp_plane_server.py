@@ -33,7 +33,21 @@ async def plane_list_projects(api_key: str, base_url: str, workspace: str) -> li
     } for p in results]
 
 
-async def plane_list_issues(api_key: str, base_url: str, workspace: str, project_id: str, max_results: int = 20) -> list:
+STATE_FILTERS = {
+    "pending": ["backlog", "todo", "unstarted"],
+    "pendiente": ["backlog", "todo", "unstarted"],
+    "in_progress": ["in progress", "started"],
+    "en progreso": ["in progress", "started"],
+    "done": ["done", "completed", "cancelled"],
+    "completada": ["done", "completed", "cancelled"],
+    "ejecutada": ["done", "completed", "cancelled"],
+}
+
+
+async def plane_list_issues(
+    api_key: str, base_url: str, workspace: str, project_id: str,
+    max_results: int = 20, state_filter: str = None, assignee_filter: str = None,
+) -> list:
     url = f"{base_url}/workspaces/{workspace}/projects/{project_id}/issues/"
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
 
@@ -46,13 +60,44 @@ async def plane_list_issues(api_key: str, base_url: str, workspace: str, project
     data = resp.json()
     results = data.get("results", data) if isinstance(data, dict) else data
 
-    return [{
-        "id": i.get("id"), "name": i.get("name"),
-        "description": i.get("description_stripped", "")[:200],
-        "state": i.get("state_detail", {}).get("name", "") if isinstance(i.get("state_detail"), dict) else "",
-        "priority": i.get("priority", "none"),
-        "due_date": i.get("target_date", ""),
-    } for i in results]
+    issues = []
+    for i in results:
+        state_detail = i.get("state_detail", {}) if isinstance(i.get("state_detail"), dict) else {}
+        state_name = state_detail.get("name", "")
+        state_group = state_detail.get("group", "")
+
+        assignee_detail = i.get("assignee_detail") or {}
+        assignee_name = ""
+        if isinstance(assignee_detail, dict):
+            assignee_name = assignee_detail.get("display_name", "") or assignee_detail.get("first_name", "")
+        elif isinstance(i.get("assignees_detail"), list) and i["assignees_detail"]:
+            assignee_name = i["assignees_detail"][0].get("display_name", "")
+
+        issues.append({
+            "id": i.get("id"), "name": i.get("name"),
+            "description": i.get("description_stripped", "")[:200],
+            "state": state_name,
+            "state_group": state_group,
+            "priority": i.get("priority", "none"),
+            "due_date": i.get("target_date", ""),
+            "assignee": assignee_name,
+        })
+
+    # Filtrar por estado
+    if state_filter:
+        allowed_states = STATE_FILTERS.get(state_filter.lower(), [])
+        if allowed_states:
+            issues = [
+                i for i in issues
+                if i["state"].lower() in allowed_states or i["state_group"].lower() in allowed_states
+            ]
+
+    # Filtrar por asignado
+    if assignee_filter:
+        assignee_lower = assignee_filter.lower()
+        issues = [i for i in issues if assignee_lower in i.get("assignee", "").lower()]
+
+    return issues
 
 
 async def plane_create_issue(api_key: str, base_url: str, workspace: str,
@@ -134,12 +179,14 @@ TOOLS = [
     },
     {
         "name": "plane_list_issues",
-        "description": "Lista tareas de un proyecto. Usar cuando el usuario quiera ver tareas existentes.",
+        "description": "Lista tareas de un proyecto. Puede filtrar por estado (pending/in_progress/done) y por persona asignada.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id": {"type": "string", "description": "Nombre o ID del proyecto"},
-                "max_results": {"type": "integer", "default": 20}
+                "project_id": {"type": "string", "description": "Nombre o ID del proyecto. Usar 'all' para todos."},
+                "max_results": {"type": "integer", "default": 20},
+                "state_filter": {"type": "string", "description": "Filtrar por estado: pending, in_progress, done, o null para todos"},
+                "assignee_filter": {"type": "string", "description": "Filtrar por nombre de persona asignada"}
             },
             "required": ["project_id"]
         }
@@ -184,7 +231,8 @@ async def handle_tool_call(tool_name: str, arguments: dict, api_key: str, base_u
         return await plane_list_projects(api_key, base_url, workspace)
     elif tool_name == "plane_list_issues":
         return await plane_list_issues(api_key, base_url, workspace,
-                                        arguments["project_id"], arguments.get("max_results", 20))
+                                        arguments["project_id"], arguments.get("max_results", 20),
+                                        arguments.get("state_filter"), arguments.get("assignee_filter"))
     elif tool_name == "plane_create_issue":
         return await plane_create_issue(api_key, base_url, workspace,
                                          arguments["project_id"], arguments["name"],

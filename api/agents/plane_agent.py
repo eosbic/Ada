@@ -30,6 +30,16 @@ TOOLS DISPONIBLES (MCP):
 Analiza el mensaje y elige la tool correcta.
 Prioridades: urgent, high, medium, low, none
 
+FILTROS DE ESTADO para plane_list_issues:
+- "tareas pendientes" → state_filter: "pending"
+- "tareas completadas" / "ejecutadas" → state_filter: "done"
+- "tareas en progreso" → state_filter: "in_progress"
+- "tareas de Carlos" → assignee_filter: "Carlos"
+- "tareas pendientes de Carlos" → state_filter: "pending", assignee_filter: "Carlos"
+- Sin filtro → no incluir state_filter (muestra todas)
+
+Si el usuario no especifica proyecto, usa project_id: "all".
+
 Responde SOLO JSON:
 {{"tool": "nombre_de_la_tool", "arguments": {{...}}}}
 Sin markdown."""
@@ -115,13 +125,49 @@ async def execute_plane_tool(state: PlaneState) -> dict:
 
     elif tool_name == "plane_list_issues":
         if not result:
-            return {"response": "No hay tareas en este proyecto."}
+            filter_msg = ""
+            sf = tool_args.get("state_filter")
+            af = tool_args.get("assignee_filter")
+            if sf:
+                filter_msg += f" con estado '{sf}'"
+            if af:
+                filter_msg += f" asignadas a '{af}'"
+            return {"response": f"No hay tareas{filter_msg} en este proyecto."}
+
         emoji = {"urgent": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "none": "⚪"}
-        formatted = "\n".join([
-            f"{emoji.get(i.get('priority', 'none'), '⚪')} **{i.get('name', '')}** — {i.get('state', '')}\n   📅 {i.get('due_date') or 'Sin fecha'}"
-            for i in result
-        ])
-        return {"response": f"Tareas ({len(result)}):\n\n{formatted}"}
+        state_emoji = {
+            "backlog": "📋", "todo": "📋", "unstarted": "📋",
+            "in progress": "🔄", "started": "🔄",
+            "done": "✅", "completed": "✅", "cancelled": "❌",
+        }
+
+        # Agrupar por estado si no hay filtro
+        sf = tool_args.get("state_filter")
+        if not sf:
+            groups = {}
+            for i in result:
+                state = i.get("state", "Sin estado")
+                groups.setdefault(state, []).append(i)
+
+            parts = []
+            for state, issues in groups.items():
+                se = state_emoji.get(state.lower(), "📌")
+                parts.append(f"\n**{se} {state}** ({len(issues)})")
+                for i in issues:
+                    pe = emoji.get(i.get("priority", "none"), "⚪")
+                    assignee = f" — {i['assignee']}" if i.get("assignee") else ""
+                    due = f" | 📅 {i['due_date']}" if i.get("due_date") else ""
+                    parts.append(f"  {pe} {i.get('name', '')}{assignee}{due}")
+
+            return {"response": f"Tareas ({len(result)}):\n" + "\n".join(parts)}
+        else:
+            formatted = "\n".join([
+                f"{emoji.get(i.get('priority', 'none'), '⚪')} **{i.get('name', '')}** — {i.get('state', '')}"
+                f"{' — ' + i['assignee'] if i.get('assignee') else ''}"
+                f"\n   📅 {i.get('due_date') or 'Sin fecha'}"
+                for i in result
+            ])
+            return {"response": f"Tareas {sf} ({len(result)}):\n\n{formatted}"}
 
     elif tool_name == "plane_create_issue":
         if isinstance(result, dict) and result.get("status") == "created":

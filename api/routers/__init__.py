@@ -11,6 +11,7 @@ from . import oauth
 from . import reports
 from . import dashboard
 from . import budget_router
+from . import consolidation_router
 
 
 api_router = APIRouter()
@@ -93,4 +94,10 @@ api_router.include_router(
     budget_router.router,
     prefix="/admin/api/budget",
     tags=["Budget"]
+)
+
+api_router.include_router(
+    consolidation_router.router,
+    prefix="/api/v1",
+    tags=["Consolidation"]
 )

@@ -16,6 +16,7 @@ from api.agents.briefing_agent import briefing_agent
 from api.agents.morning_brief_agent import morning_brief_agent
 from api.agents.prospect_pro_agent import prospect_pro_agent
 from api.agents.image_agent import image_agent
+from api.agents.consolidation_agent import consolidation_agent
 
 from api.services.budget_service import check_budget, get_model_for_plan, log_usage
 from api.services.semantic_firewall import evaluate_semantic_firewall
@@ -40,6 +41,7 @@ AGENT_TASK_MAP = {
     "project_agent": "chat_with_tools",
     "briefing_agent": "alert_evaluation",
     "morning_brief_agent": "alert_evaluation",
+    "consolidation_agent": "excel_analysis",
 }
 
 
@@ -55,6 +57,7 @@ AGENT_REGISTRY = {
     "project_agent": plane_agent,
     "briefing_agent": briefing_agent,
     "morning_brief_agent": morning_brief_agent,
+    "consolidation_agent": consolidation_agent,
 }
 
 DEFAULT_AGENT = "chat_agent"

@@ -17,6 +17,7 @@ from api.agents.morning_brief_agent import morning_brief_agent
 from api.agents.prospect_pro_agent import prospect_pro_agent
 from api.agents.image_agent import image_agent
 
+from api.services.budget_service import check_budget, get_model_for_plan, log_usage
 from api.services.semantic_firewall import evaluate_semantic_firewall
 from api.services.tool_orchestrator import collect_multi_source_context
 from api.services.response_policy import enforce_response_contract
@@ -24,6 +25,22 @@ from api.services.artifact_service import wants_pdf, generate_pdf_from_text
 from api.services.chart_service import wants_chart, generate_chart_from_text
 from api.services.output_mode_policy import decide_output_mode
 from api.services.memory_service import search_reports_qdrant, search_vector_store1
+from models.selector import selector
+
+
+AGENT_TASK_MAP = {
+    "chat_agent": "chat",
+    "excel_analyst": "excel_analysis",
+    "image_analyst": "document_analysis",
+    "calendar_agent": "chat_with_tools",
+    "email_agent": "email_draft",
+    "prospecting_agent": "prospecting",
+    "team_agent": "chat",
+    "notion_agent": "chat_with_tools",
+    "project_agent": "chat_with_tools",
+    "briefing_agent": "alert_evaluation",
+    "morning_brief_agent": "alert_evaluation",
+}
 
 
 AGENT_REGISTRY = {
@@ -145,6 +162,12 @@ async def run_agent(
             },
         }
 
+    # 1.5) Budget check
+    budget_status = check_budget(empresa_id) if empresa_id else None
+    budget_override = None
+    if budget_status and budget_status.is_downgraded:
+        budget_override = budget_status.forced_model
+
     # 2) Router por intent
     router_result = await router_agent.ainvoke({
         "message": message,
@@ -174,6 +197,16 @@ async def run_agent(
         intent=intent,
     )
 
+    # 3.5) Plan-based model restriction
+    plan_downgraded = False
+    if budget_status and not budget_override:
+        task_type = AGENT_TASK_MAP.get(routed_to, "chat")
+        plan_model, plan_downgraded = get_model_for_plan(
+            budget_status.plan_type, task_type
+        )
+        if plan_downgraded:
+            budget_override = plan_model
+
     agent_input = {
         "message": message,
         "empresa_id": empresa_id or "",
@@ -183,6 +216,9 @@ async def run_agent(
         "sources_used": tool_context.get("sources_used", []),
         "dual_repo_checked": tool_context.get("dual_repo_checked", True),
     }
+
+    if budget_override:
+        agent_input["model_preference"] = budget_override
 
     # 4) Ejecutar agente especializado
     try:
@@ -197,6 +233,29 @@ async def run_agent(
 
     response = agent_result.get("response", "No pude procesar tu mensaje.")
     model_used = agent_result.get("model_used", "unknown")
+
+    # 4.5) Log token usage
+    if empresa_id and budget_status:
+        try:
+            task_type = AGENT_TASK_MAP.get(routed_to, "chat")
+            input_tokens = len(message or "") // 4
+            output_tokens = len(response or "") // 4
+            cost_usd = selector.estimate_cost(model_used, input_tokens, output_tokens)
+            was_downgraded = budget_status.is_downgraded or plan_downgraded
+            log_usage(
+                empresa_id=empresa_id,
+                user_id=user_id,
+                agent=routed_to,
+                model_name=model_used,
+                task_type=task_type,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                was_downgraded=was_downgraded,
+                original_model=None if not was_downgraded else AGENT_TASK_MAP.get(routed_to, "chat"),
+            )
+        except Exception as e:
+            print(f"RUNNER budget log error: {e}")
 
     # 4.1) Garantiza consulta dual antes de aceptar respuestas tipo "no encontre".
     if _looks_like_no_data_response(response) and not tool_context.get("dual_repo_checked", False) and empresa_id and message:
@@ -276,7 +335,7 @@ async def run_agent(
     has_pdf = any(a.get("type") == "pdf" for a in attachments if isinstance(a, dict))
     final_response = _align_response_with_artifacts(final_response, has_chart=has_chart, has_pdf=has_pdf)
 
-    return {
+    result = {
         "response": final_response,
         "intent": intent,
         "confidence": confidence,
@@ -289,3 +348,22 @@ async def run_agent(
         "attachment": attachment,
         "attachments": attachments,
     }
+
+    # Budget metadata
+    if budget_status:
+        result["budget"] = {
+            "plan_type": budget_status.plan_type,
+            "usage_percent": budget_status.usage_percent,
+            "remaining": budget_status.remaining,
+            "is_downgraded": budget_status.is_downgraded,
+            "topup_balance": budget_status.topup_balance,
+        }
+        if budget_status.is_downgraded:
+            result["budget_warning"] = (
+                "Has alcanzado tu limite mensual de presupuesto. "
+                "Tu servicio ha sido degradado a modelos gratuitos temporalmente. "
+                "Puedes adquirir tokens adicionales desde el panel: "
+                "paquetes de $20, $50 o $100 USD."
+            )
+
+    return result

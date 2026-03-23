@@ -21,7 +21,7 @@ python -m scripts.backfill_tags_links  # backfill Knowledge Graph
 ```
 api/main.py                              → FastAPI app (CORS, rate limit, startup)
 api/routers/                             → Endpoints HTTP
-api/agents/                              → Agentes LangGraph (15 agentes)
+api/agents/                              → Agentes LangGraph (16 agentes)
 api/services/                            → Lógica de negocio y servicios
 api/services/agent_runner.py             → Orquestador: Router → Agente
 api/services/provider_router.py          → Decide Google vs Microsoft por tenant
@@ -55,6 +55,18 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `MICROSOFT_CLIENT_SECRET`
 - `MICROSOFT_TENANT_ID` (default `"common"`)
 
+## Generic PM Architecture
+`notion_agent` y `plane_agent` siguen siendo agentes dedicados con tools propias. `generic_pm_agent` cubre Asana, Monday, Trello, ClickUp y Jira vía la interfaz `mcp_pm_base.PMServerBase`.
+
+4 tools estándar: `pm_list_projects`, `pm_list_tasks`, `pm_create_task`, `pm_update_task`. Todos retornan el mismo formato normalizado (estados: pending/in_progress/done, prioridades: urgent/high/medium/low/none).
+
+`agent_runner._resolve_pm_agent()` resuelve automáticamente qué agente PM usar según credenciales de la empresa: si tiene Plane → `project_agent`, si tiene Notion → `notion_agent`, si tiene un PM genérico → `generic_pm_agent`.
+
+**Para agregar un nuevo PM tool:**
+1. Crear `api/mcp_servers/mcp_xxx_server.py` que extienda `PMServerBase`
+2. Registrar en `mcp_host.MCP_SERVERS` con `category="generic_pm"`
+3. Agregar provider name a `/connect-service` en `oauth.py` y a `_resolve_pm_agent` en `agent_runner.py`
+
 ## Convenciones
 - Async everywhere (excepto `upload.py` por bug uvloop)
 - NUNCA hardcodear API keys — todo en `.env`
@@ -83,6 +95,7 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `team_agent`
 - `notion_agent`
 - `project_agent` / `plane_agent`
+- `generic_pm_agent` — PM agnóstico (Asana, Monday, Trello, ClickUp, Jira) via `mcp_pm_base`
 - `briefing_agent`
 - `morning_brief_agent`
 - `consolidation_agent`
@@ -92,9 +105,10 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `alert_agent`
 
 ## MCP Servers en `mcp_host.py`
-- `notion` — CRUD Notion
-- `plane` — CRUD Plane
-- `microsoft365` — Calendar + Email + Drive via Microsoft Graph
+- `notion` — CRUD Notion (category: project_management, agente dedicado)
+- `plane` — CRUD Plane (category: project_management, agente dedicado)
+- `microsoft365` — Calendar + Email + Drive via Microsoft Graph (category: productivity)
+- `asana` — PM genérico via Asana REST API (category: generic_pm, usa `mcp_pm_base`)
 
 ## Knowledge Graph (en `api/services/`)
 - `entity_extractor.py` — Gemini Flash extrae clientes/productos/personas

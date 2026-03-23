@@ -206,15 +206,17 @@ async def generate_profile_or_ask(state: ProspectState) -> dict:
         from sqlalchemy import text as sql_text
 
         empresa_id = state.get("empresa_id", "")
+        report_id = None
         if empresa_id:
             with sync_engine.connect() as conn:
-                conn.execute(
+                result = conn.execute(
                     sql_text("""
                         INSERT INTO ada_reports
                             (empresa_id, title, report_type, markdown_content,
                              metrics_summary, alerts, generated_by, allowed_roles)
                         VALUES (:eid, :title, 'prospect_profile', :content,
                                 :metrics, '[]', :model, :roles)
+                        RETURNING id
                     """),
                     {
                         "eid": empresa_id,
@@ -225,7 +227,14 @@ async def generate_profile_or_ask(state: ProspectState) -> dict:
                         "roles": ["administrador", "gerente", "vendedor"],
                     },
                 )
+                row = result.fetchone()
+                if row:
+                    report_id = str(row[0])
                 conn.commit()
+
+            if report_id and empresa_id:
+                from api.services.kg_pipeline import run_kg_pipeline
+                run_kg_pipeline(report_id, empresa_id, response.content, "")
     except Exception as e:
         print(f"PROSPECT PRO: Error guardando en DB: {e}")
 

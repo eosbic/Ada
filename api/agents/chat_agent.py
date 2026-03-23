@@ -7,6 +7,7 @@ from typing import TypedDict, Optional, List, Dict
 from langgraph.graph import StateGraph, END
 from models.selector import selector
 from sqlalchemy import text as sql_text
+from api.services.graph_navigator import traverse_report_graph
 from api.services.memory_service import (
     search_memory,
     store_memory,
@@ -161,6 +162,44 @@ async def retrieve_context(state: ChatState) -> dict:
     reports_qdrant = [r for r in reports_qdrant if not _is_query_capture_text(r)]
     vector_docs = [r for r in vector_docs if not _is_query_capture_text(r)]
 
+    # Knowledge Graph: seguir enlaces entre reportes
+    graph_context = []
+    if reports_sql and empresa_id:
+        try:
+            from api.database import sync_engine
+
+            report_ids = []
+            clean = re.sub(r'[^a-záéíóúñA-ZÁÉÍÓÚÑ0-9\s]', ' ', message)
+            words = [w for w in clean.strip().split() if len(w) > 3]
+
+            with sync_engine.connect() as conn:
+                for word in words[:3]:
+                    rows = conn.execute(
+                        sql_text("""
+                            SELECT id FROM ada_reports
+                            WHERE empresa_id = :eid
+                            AND is_archived = FALSE
+                            AND (title ILIKE :like OR markdown_content ILIKE :like)
+                            ORDER BY created_at DESC LIMIT 3
+                        """),
+                        {"eid": empresa_id, "like": f"%{word}%"}
+                    ).fetchall()
+                    report_ids.extend([str(r.id) for r in rows])
+
+            report_ids = list(set(report_ids))[:10]
+
+            if report_ids:
+                connected = traverse_report_graph(report_ids, empresa_id, limit=5)
+                for c in connected:
+                    graph_context.append(
+                        f"[Conectado via {c['link_type']}] {c['title']}: "
+                        f"{c['snippet'][:300]}"
+                    )
+                print(f"CHAT AGENT: Graph traversal -> {len(connected)} reportes conectados")
+
+        except Exception as e:
+            print(f"CHAT AGENT: Graph traversal error: {e}")
+
     context_chunks = []
     sources_used = list(state.get("sources_used", []))
 
@@ -179,6 +218,10 @@ async def retrieve_context(state: ChatState) -> dict:
     if vector_docs:
         context_chunks.append("## Qdrant Vector Store1\n" + "\n\n".join(vector_docs[:3]))
         sources_used.append({"name": "qdrant_vector_store1", "detail": f"{len(vector_docs)} hallazgos", "confidence": 0.83})
+
+    if graph_context:
+        context_chunks.append("## Knowledge Graph (reportes conectados)\n" + "\n\n".join(graph_context))
+        sources_used.append({"name": "knowledge_graph", "detail": f"{len(graph_context)} conectados", "confidence": 0.75})
 
     tool_context = state.get("tool_context", "")
     if tool_context:

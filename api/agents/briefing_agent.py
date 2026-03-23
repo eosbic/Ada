@@ -236,6 +236,43 @@ Si no encontraste cruces, dilo honestamente pero igual da recomendaciones basada
 
     print(f"BRIEFING: Generado con {model_name}")
 
+    # Guardar briefing en ada_reports + KG pipeline
+    try:
+        from api.database import sync_engine
+        from sqlalchemy import text as sql_text
+        empresa_id = state.get("empresa_id", "")
+        file_name = state.get("file_name", "")
+        if empresa_id and response.content:
+            with sync_engine.connect() as conn:
+                result = conn.execute(
+                    sql_text("""
+                        INSERT INTO ada_reports
+                            (empresa_id, title, report_type, source_file,
+                             markdown_content, metrics_summary, generated_by, allowed_roles)
+                        VALUES (:eid, :title, 'proactive_briefing', :source,
+                                :markdown, :metrics, :model, :roles)
+                        RETURNING id
+                    """),
+                    {
+                        "eid": empresa_id,
+                        "title": f"Briefing: {file_name or 'manual'}",
+                        "source": file_name or "briefing_manual",
+                        "markdown": response.content,
+                        "metrics": json.dumps({"entities": state.get("entities", [])}, ensure_ascii=False),
+                        "model": model_name,
+                        "roles": ["administrador", "gerente"],
+                    },
+                )
+                row = result.fetchone()
+                report_id = str(row[0]) if row else None
+                conn.commit()
+
+            if report_id:
+                from api.services.kg_pipeline import run_kg_pipeline
+                run_kg_pipeline(report_id, empresa_id, response.content, "")
+    except Exception as e:
+        print(f"BRIEFING: Error guardando en DB/KG: {e}")
+
     return {
         "response": response.content,
         "model_used": model_name,

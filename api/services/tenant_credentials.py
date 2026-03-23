@@ -16,6 +16,9 @@ import httpx
 FERNET_KEY = os.getenv("FERNET_KEY")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "common")
 
 
 def get_google_credentials(empresa_id: str, service: str = "gmail") -> dict:
@@ -121,6 +124,131 @@ def _refresh_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
         print(f"CREDENTIALS: Refresh OK {service}/{empresa_id}")
     except Exception as e:
         print(f"ERROR saving refreshed token: {e}")
+
+    return creds
+
+
+def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar") -> dict:
+    """
+    Obtiene credenciales de Microsoft 365 para una empresa.
+    Services válidos: outlook_calendar, outlook_email, onedrive.
+    """
+    import re
+    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+    if not uuid_pattern.match(empresa_id or ""):
+        return {"error": "ID de empresa no válido"}
+    if not FERNET_KEY:
+        return {"error": "Sistema de credenciales no configurado"}
+
+    fernet = Fernet(FERNET_KEY.encode())
+
+    try:
+        with sync_engine.connect() as conn:
+            empresa = conn.execute(
+                sql_text("SELECT id, nombre FROM empresas WHERE id = :eid"),
+                {"eid": empresa_id},
+            ).fetchone()
+
+            if not empresa:
+                return {"error": "Empresa no registrada en el sistema"}
+
+            result = conn.execute(
+                sql_text("""
+                    SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
+                    FROM tenant_credentials
+                    WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
+                """),
+                {"eid": empresa_id, "provider": service},
+            )
+            row = result.fetchone()
+
+        if not row:
+            service_names = {
+                "outlook_calendar": "Outlook Calendar",
+                "outlook_email": "Outlook Email",
+                "onedrive": "OneDrive",
+            }
+            svc_name = service_names.get(service, service)
+            return {"error": f"{empresa.nombre} no tiene {svc_name} conectado. El administrador debe vincularlo desde configuración."}
+
+        # Descifrar
+        creds = json.loads(fernet.decrypt(row.encrypted_data.encode()).decode())
+        refresh_token = fernet.decrypt(row.oauth2_refresh_token_encrypted.encode()).decode()
+        creds["refresh_token"] = refresh_token
+
+        # Auto-refresh si expiró
+        if row.oauth2_expiry and row.oauth2_expiry < datetime.utcnow() + timedelta(minutes=5):
+            creds = _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet)
+
+        creds.setdefault("client_id", MICROSOFT_CLIENT_ID)
+        creds.setdefault("client_secret", MICROSOFT_CLIENT_SECRET)
+        creds.setdefault("tenant_id", MICROSOFT_TENANT_ID)
+
+        print(f"CREDENTIALS: OK {service} (M365) para {empresa.nombre}")
+        return creds
+
+    except Exception as e:
+        print(f"ERROR credentials M365 {service}/{empresa_id}: {e}")
+        return {"error": f"Error obteniendo credenciales M365: {str(e)}"}
+
+
+def _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
+    """Refresh automático de OAuth2 token para Microsoft 365."""
+    import requests
+
+    tenant = creds.get("tenant_id", MICROSOFT_TENANT_ID) or MICROSOFT_TENANT_ID
+
+    resp = requests.post(
+        f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        data={
+            "client_id": creds.get("client_id", MICROSOFT_CLIENT_ID),
+            "client_secret": creds.get("client_secret", MICROSOFT_CLIENT_SECRET),
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+            "scope": "https://graph.microsoft.com/.default offline_access",
+        },
+    )
+
+    if resp.status_code != 200:
+        print(f"ERROR M365 refresh {service}/{empresa_id}: {resp.text}")
+        return creds
+
+    token_data = resp.json()
+    creds["access_token"] = token_data["access_token"]
+    new_expiry = datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
+
+    # Si Microsoft rota el refresh_token, guardar el nuevo
+    new_refresh = token_data.get("refresh_token")
+    if new_refresh:
+        creds["refresh_token"] = new_refresh
+
+    # Actualizar en DB
+    try:
+        creds_to_store = {k: v for k, v in creds.items() if k != "refresh_token"}
+        encrypted_creds = fernet.encrypt(json.dumps(creds_to_store).encode())
+        encrypted_refresh = fernet.encrypt(creds["refresh_token"].encode())
+
+        with sync_engine.connect() as conn:
+            conn.execute(
+                sql_text("""
+                    UPDATE tenant_credentials
+                    SET encrypted_data = :creds,
+                        oauth2_refresh_token_encrypted = :refresh,
+                        oauth2_expiry = :expiry
+                    WHERE empresa_id = :eid AND provider = :provider
+                """),
+                {
+                    "creds": encrypted_creds.decode(),
+                    "refresh": encrypted_refresh.decode(),
+                    "expiry": new_expiry,
+                    "eid": empresa_id,
+                    "provider": service,
+                },
+            )
+            conn.commit()
+        print(f"CREDENTIALS: M365 Refresh OK {service}/{empresa_id}")
+    except Exception as e:
+        print(f"ERROR saving M365 refreshed token: {e}")
 
     return creds
 

@@ -111,6 +111,13 @@ async def execute_plane_tool(state: PlaneState) -> dict:
 
     result = await mcp_host.call_tool_by_name(tool_name, tool_args, empresa_id)
 
+    try:
+        from api.services.trail_service import leave_pm_trail
+        if empresa_id and tool_name == "plane_list_issues" and isinstance(result, list) and result:
+            leave_pm_trail(empresa_id, result, project_name=tool_args.get("project_id", ""), pm_provider="plane")
+    except Exception:
+        pass
+
     if isinstance(result, dict) and "error" in result:
         return {"response": f"⚠️ {result['error']}"}
 

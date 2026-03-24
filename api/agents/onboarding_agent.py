@@ -484,20 +484,31 @@ async def process_onboarding(
         products_str = ", ".join(products) if products else "por definir"
         interests_str = ", ".join(admin_data.get("primary_interests", []))
 
+        icp = company_data.get("target_icp", {})
+        icp_str = f"{icp.get('sector', '')} / {icp.get('decision_maker_title', '')}" if icp.get("sector") else "N/D"
+        competitors_str = ", ".join(company_data.get("competitors_raw", [])) or "N/D"
+
         return {
             "step": "confirmation",
             "message": (
-                f"Configuración de {ada_name} para toda tu empresa:\n\n"
+                f"Configuracion de {ada_name} para toda tu empresa:\n\n"
                 f"🤖 Nombre: {ada_name}\n"
                 f"🏢 Empresa: {company_data.get('company_name', '')}\n"
                 f"💼 Sector: {company_data.get('business_description', '')}\n"
+                f"💡 Propuesta de valor: {(company_data.get('value_proposition', '') or 'N/D')[:80]}\n"
                 f"📦 Productos/Servicios: {products_str}\n"
-                f"📍 Ubicación: {company_data.get('city', '')}\n"
-                f"👥 Tamaño: {company_data.get('company_size', '')} "
+                f"📍 Ubicacion: {company_data.get('city', '')}\n"
+                f"👥 Tamano: {company_data.get('company_size', '')} "
                 f"({company_data.get('num_employees', 'N/D')} empleados)\n"
+                f"🌐 Web: {company_data.get('website_url', 'N/D') or 'N/D'}\n"
+                f"🎯 Cliente ideal: {icp_str}\n"
+                f"🏢 Competidores: {competitors_str}\n"
+                f"🎨 Voz de marca: {company_data.get('brand_voice', 'N/D') or 'N/D'}\n"
+                f"📧 Suite: {company_data.get('productivity_suite', 'N/D')}\n"
+                f"📋 PM: {company_data.get('pm_tool', 'N/D')}\n"
                 f"📊 Tus prioridades: {interests_str}\n"
                 f"💬 Estilo: {admin_data.get('communication_style', 'directo')}\n\n"
-                "¿Está todo bien? (sí/no)"
+                "¿Esta todo bien? (si/no)"
             ),
             "completed": False,
         }
@@ -517,7 +528,7 @@ async def process_onboarding(
 
         ada_name = admin_data.get("ada_name", "Ada")
 
-        # Guardar perfil de empresa
+        # Guardar perfil de empresa con DNA completo
         await db.execute(
             text("""
                 INSERT INTO ada_company_profile (
@@ -525,13 +536,21 @@ async def process_onboarding(
                     business_description, main_products, main_services,
                     company_size, num_employees, city,
                     ada_custom_name, ada_personality,
-                    admin_interests, configured_by
+                    admin_interests, configured_by,
+                    mission, vision, value_proposition, business_model,
+                    sales_cycle_days, brand_voice, website_url,
+                    target_icp, social_urls, logo_url,
+                    productivity_suite, pm_tool, onboarding_complete
                 ) VALUES (
                     :empresa_id, :company_name, :industry_type,
                     :description, :products, :services,
                     :size, :employees, :city,
                     :ada_name, :style,
-                    :interests, :user_id
+                    :interests, :user_id,
+                    :mission, :vision, :value_prop, :biz_model,
+                    :sales_days, :brand_voice, :web_url,
+                    :icp, :socials, :logo,
+                    :suite, :pm, TRUE
                 )
                 ON CONFLICT (empresa_id) DO UPDATE SET
                     company_name = EXCLUDED.company_name,
@@ -545,6 +564,19 @@ async def process_onboarding(
                     ada_custom_name = EXCLUDED.ada_custom_name,
                     ada_personality = EXCLUDED.ada_personality,
                     admin_interests = EXCLUDED.admin_interests,
+                    mission = EXCLUDED.mission,
+                    vision = EXCLUDED.vision,
+                    value_proposition = EXCLUDED.value_proposition,
+                    business_model = EXCLUDED.business_model,
+                    sales_cycle_days = EXCLUDED.sales_cycle_days,
+                    brand_voice = EXCLUDED.brand_voice,
+                    website_url = EXCLUDED.website_url,
+                    target_icp = EXCLUDED.target_icp,
+                    social_urls = EXCLUDED.social_urls,
+                    logo_url = EXCLUDED.logo_url,
+                    productivity_suite = EXCLUDED.productivity_suite,
+                    pm_tool = EXCLUDED.pm_tool,
+                    onboarding_complete = TRUE,
                     updated_at = NOW()
             """),
             {
@@ -561,6 +593,18 @@ async def process_onboarding(
                 "style": admin_data.get("communication_style", "directo"),
                 "interests": json.dumps(admin_data.get("primary_interests", [])),
                 "user_id": user_id,
+                "mission": company_data.get("mission", ""),
+                "vision": company_data.get("vision", ""),
+                "value_prop": company_data.get("value_proposition", ""),
+                "biz_model": company_data.get("business_model", ""),
+                "sales_days": company_data.get("sales_cycle_days"),
+                "brand_voice": company_data.get("brand_voice", ""),
+                "web_url": company_data.get("website_url", ""),
+                "icp": json.dumps(company_data.get("target_icp", {}), ensure_ascii=False),
+                "socials": json.dumps(company_data.get("social_urls", {}), ensure_ascii=False),
+                "logo": company_data.get("logo_url", ""),
+                "suite": company_data.get("productivity_suite", "google"),
+                "pm": company_data.get("pm_tool", "none"),
             },
         )
 
@@ -621,16 +665,73 @@ async def process_onboarding(
 
         await db.commit()
 
+        # Post-procesamiento en background: scrape web, competidores, agent_configs
+        try:
+            import threading
+
+            def _post_onboarding():
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    web_url = company_data.get("website_url", "")
+                    if web_url:
+                        from api.services.dna_generator import scrape_and_analyze_web
+                        loop.run_until_complete(scrape_and_analyze_web(empresa_id, web_url))
+                        print(f"ONBOARDING: Web scraping OK para {web_url}")
+
+                    competitors = company_data.get("competitors_raw", [])
+                    if competitors:
+                        from api.services.dna_generator import analyze_competitors
+                        loop.run_until_complete(analyze_competitors(empresa_id, competitors))
+                        print(f"ONBOARDING: Analisis de {len(competitors)} competidores OK")
+
+                    from api.services.dna_generator import generate_agent_configs
+                    loop.run_until_complete(generate_agent_configs(empresa_id))
+                    print(f"ONBOARDING: agent_configs generados OK")
+
+                    # Setup app connections en tenant_app_config
+                    from api.database import sync_engine
+                    from sqlalchemy import text as sql_text
+                    suite = company_data.get("productivity_suite", "google")
+                    pm = company_data.get("pm_tool")
+                    with sync_engine.connect() as conn:
+                        for svc in ["email", "calendar", "drive"]:
+                            conn.execute(sql_text("""
+                                INSERT INTO tenant_app_config (empresa_id, service, provider)
+                                VALUES (:eid, :svc, :provider)
+                                ON CONFLICT (empresa_id, service) DO UPDATE SET provider = :provider
+                            """), {"eid": empresa_id, "svc": svc, "provider": suite})
+                        if pm and pm != "none":
+                            conn.execute(sql_text("""
+                                INSERT INTO tenant_app_config (empresa_id, service, provider)
+                                VALUES (:eid, 'pm', :provider)
+                                ON CONFLICT (empresa_id, service) DO UPDATE SET provider = :provider
+                            """), {"eid": empresa_id, "provider": pm})
+                        conn.commit()
+                    print(f"ONBOARDING: tenant_app_config OK")
+                except Exception as e:
+                    print(f"ONBOARDING: Post-processing error (no bloqueante): {e}")
+                finally:
+                    loop.close()
+
+            t = threading.Thread(target=_post_onboarding)
+            t.start()
+            t.join(timeout=45)
+        except Exception as e:
+            print(f"ONBOARDING: Post-processing thread error: {e}")
+
         _onboarding_sessions.pop(empresa_id, None)
 
         return {
             "step": "complete",
             "message": (
-                f"✅ ¡Listo! {ada_name} está configurada para "
+                f"✅ ¡Listo! {ada_name} esta configurada para "
                 f"{company_data.get('company_name', 'tu empresa')}.\n\n"
-                f"A partir de ahora cada respuesta estará ajustada "
-                f"a tu negocio y tu estilo.\n\n"
-                f"¿En qué te ayudo primero?"
+                f"🔄 Estoy analizando tu sitio web y competidores en segundo plano. "
+                f"En unos minutos tendre todo listo para personalizar cada respuesta "
+                f"a tu negocio.\n\n"
+                f"¿En que te ayudo primero?"
             ),
             "completed": True,
         }

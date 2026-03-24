@@ -99,24 +99,60 @@ Responde en formato Markdown con emojis y negritas."""
 
 
 async def detect_entity(state: Entity360State) -> dict:
-    """Detecta la entidad (persona/empresa) usando LLM + contexto conversacional."""
+    """Detecta la entidad (persona/empresa) usando reglas + LLM + contexto conversacional."""
+    import re as _re
+
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
     user_id = state.get("user_id", "")
 
-    # Cargar historial para resolver pronombres
-    history_text = ""
+    # Cargar historial
+    history = []
     if empresa_id and user_id:
         try:
             history = get_history(empresa_id, user_id)
-            if history:
-                recent = history[-6:]
-                history_text = "\n".join(
-                    f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
-                    for m in recent
-                )
         except Exception as e:
             print(f"ENTITY360: history error: {e}")
+
+    # PASO 1: Detección determinística de pronombres
+    # Si el mensaje es un follow-up con pronombre, reusar la última entidad del usuario
+    msg_lower = message.lower().strip()
+    pronoun_patterns = [
+        "de él", "de el", "de ella", "sobre él", "sobre el", "sobre ella",
+        "completa de él", "completa de el", "completa de ella",
+        "información de él", "informacion de el",
+        "participa él", "participa el", "participa ella",
+        "sus proyectos", "sus tareas",
+    ]
+
+    is_pronoun_followup = any(p in msg_lower for p in pronoun_patterns)
+
+    if is_pronoun_followup and history:
+        # Buscar la última entidad mencionada por el USUARIO (no por Ada)
+        # Recorrer historial de atrás para adelante, solo mensajes del usuario
+        for msg_entry in reversed(history[-8:]):
+            if msg_entry.get("role") != "user":
+                continue
+            content = msg_entry.get("content", "")
+            # Buscar nombres propios (palabras que empiezan con mayúscula, 2+ palabras seguidas)
+            name_match = _re.findall(r'\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)\b', content)
+            if name_match:
+                entity_name = name_match[-1]  # Tomar el último nombre encontrado
+                print(f"ENTITY360: pronoun resolved deterministically -> '{entity_name}'")
+                return {
+                    "entity_name": entity_name,
+                    "entity_type": "person",
+                    "model_used": "deterministic_pronoun",
+                }
+
+    # PASO 2: Si no es pronombre, usar LLM normalmente
+    history_text = ""
+    if history:
+        recent = history[-6:]
+        history_text = "\n".join(
+            f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
+            for m in recent
+        )
 
     model, model_name = selector.get_model("routing")
 
@@ -136,7 +172,6 @@ async def detect_entity(state: Entity360State) -> dict:
         entity_name = result.get("entity_name", "").strip()
         entity_type = result.get("entity_type", "person")
     except Exception:
-        # Fallback: intentar extraer nombre del mensaje
         entity_name = ""
         entity_type = "person"
 

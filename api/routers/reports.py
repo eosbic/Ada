@@ -148,6 +148,14 @@ async def search_reports(
     return {"status": "success", "query": q, "results": results, "total": len(results)}
 
 
+@router.get("/entities/{entity_name}/360")
+async def entity_360_view(entity_name: str, empresa_id: str):
+    """Vista 360° de una entidad: todas sus menciones en todas las fuentes."""
+    from api.services.graph_navigator import get_entity_360
+    result = get_entity_360(entity_name, empresa_id)
+    return {"entity": entity_name, "empresa_id": empresa_id, **result}
+
+
 @router.patch("/reports/{report_id}")
 async def update_report(report_id: str, data: dict, db: AsyncSession = Depends(get_db)):
     """Archivar/desarchivar un reporte."""

@@ -25,8 +25,14 @@ STEPS = [
     "welcome",
     "ada_name",
     "company_info",
+    "value_prop",
     "products",
     "size_city",
+    "website",
+    "target_icp",
+    "competitors",
+    "brand",
+    "apps",
     "interests",
     "style",
     "confirmation",
@@ -97,12 +103,15 @@ async def process_onboarding(
         try:
             extraction = model.invoke([
                 {"role": "system", "content": (
-                    "Extrae nombre de empresa y clasifica industria.\n"
+                    "Extrae nombre de empresa, clasifica industria, y detecta mision/vision/modelo si se mencionan.\n"
                     "Industrias: retail, servicios, manufactura, tecnologia, salud, "
                     "educacion, construccion, alimentos, transporte, consultoria, "
                     "restaurante, agricultura, inmobiliario, financiero, generic\n"
                     "JSON: {\"company_name\": \"...\", \"industry_type\": \"...\", "
-                    "\"description\": \"...\"}\nSin markdown, sin explicación."
+                    "\"description\": \"...\", \"mission\": \"...\", \"vision\": \"...\", "
+                    "\"business_model\": \"B2B|B2C|mayorista|retail|servicios|SaaS|mixto\"}\n"
+                    "Si no se mencionan mission/vision/business_model, dejar string vacio.\n"
+                    "Sin markdown, sin explicacion."
                 )},
                 {"role": "user", "content": user_response}
             ])
@@ -112,20 +121,39 @@ async def process_onboarding(
             company_data["company_name"] = parsed.get("company_name", user_response)
             company_data["industry_type"] = parsed.get("industry_type", "generic")
             company_data["business_description"] = parsed.get("description", user_response)
+            company_data["mission"] = parsed.get("mission", "")
+            company_data["vision"] = parsed.get("vision", "")
+            company_data["business_model"] = parsed.get("business_model", "")
         except Exception:
             company_data["company_name"] = user_response
             company_data["industry_type"] = "generic"
             company_data["business_description"] = user_response
 
+        session["step"] = "value_prop"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "value_prop",
+            "message": (
+                f"Entendido, {company_data['company_name']}.\n\n"
+                f"¿Cual es la propuesta de valor de {company_data['company_name']}? "
+                f"¿Por que te eligen tus clientes en vez de a la competencia?"
+            ),
+            "completed": False,
+        }
+
+    # ─── VALUE PROPOSITION ─────────────────────────────
+    if step == "value_prop":
+        company_data["value_proposition"] = user_response.strip()
         session["step"] = "products"
         session["company_data"] = company_data
         _onboarding_sessions[empresa_id] = session
         return {
             "step": "products",
             "message": (
-                f"Entendido. ¿Cuáles son los principales productos o servicios "
-                f"de {company_data['company_name']}?\n\n"
-                "Dime los más importantes separados por comas."
+                f"¿Cuales son los principales productos o servicios "
+                f"de {company_data.get('company_name', 'tu empresa')}?\n\n"
+                "Dime los mas importantes separados por comas."
             ),
             "completed": False,
         }
@@ -202,13 +230,188 @@ async def process_onboarding(
             city_text = re.sub(r'\d+', '', user_response).strip().strip(',').strip()
             company_data["city"] = city_text if city_text else user_response
 
+        session["step"] = "website"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "website",
+            "message": (
+                "¿Tienes sitio web? Pega la URL y yo extraigo la informacion automaticamente.\n\n"
+                "Si no tienes, escribe 'no tengo' y seguimos."
+            ),
+            "completed": False,
+        }
+
+    # ─── WEBSITE ────────────────────────────────────
+    if step == "website":
+        resp_lower = user_response.strip().lower()
+        if any(k in resp_lower for k in ["http", "www", ".com", ".co", ".org", ".net"]):
+            url = user_response.strip()
+            if not url.startswith("http"):
+                url = "https://" + url
+            company_data["website_url"] = url
+        else:
+            company_data["website_url"] = ""
+
+        session["step"] = "target_icp"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "target_icp",
+            "message": (
+                "¿Quien es tu cliente ideal?\n\n"
+                "Describeme:\n"
+                "- ¿A que sector pertenece?\n"
+                "- ¿Que cargo tiene quien toma la decision de compra?\n"
+                "- ¿Que tamano de empresa?\n"
+                "- ¿Cuantos dias toma normalmente cerrar una venta?"
+            ),
+            "completed": False,
+        }
+
+    # ─── TARGET ICP ─────────────────────────────────
+    if step == "target_icp":
+        model, _ = selector.get_model("routing")
+        try:
+            extraction = model.invoke([
+                {"role": "system", "content": (
+                    "Extrae el perfil del cliente ideal del texto.\n"
+                    "JSON: {\"sector\": \"...\", \"decision_maker_title\": \"...\", "
+                    "\"company_size\": \"...\", \"sales_cycle_days\": numero_entero}\n"
+                    "Si no menciona dias de venta, usar 30 como default.\n"
+                    "Sin markdown, sin explicacion."
+                )},
+                {"role": "user", "content": user_response}
+            ])
+            parsed = json.loads(
+                extraction.content.strip().replace("```json", "").replace("```", "")
+            )
+            company_data["target_icp"] = {
+                "sector": parsed.get("sector", ""),
+                "decision_maker_title": parsed.get("decision_maker_title", ""),
+                "company_size": parsed.get("company_size", ""),
+            }
+            company_data["sales_cycle_days"] = parsed.get("sales_cycle_days", 30)
+        except Exception:
+            company_data["target_icp"] = {"raw": user_response}
+            company_data["sales_cycle_days"] = 30
+
+        session["step"] = "competitors"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "competitors",
+            "message": (
+                "¿Quienes son tus 3 principales competidores? "
+                "Dime sus nombres separados por coma.\n\n"
+                "Si no tienes competidores directos o no los conoces, "
+                "escribe 'no se' y seguimos."
+            ),
+            "completed": False,
+        }
+
+    # ─── COMPETITORS ────────────────────────────────
+    if step == "competitors":
+        resp_lower = user_response.strip().lower()
+        if any(k in resp_lower for k in ["no se", "no sé", "ninguno", "no conozco"]):
+            company_data["competitors_raw"] = []
+        else:
+            company_data["competitors_raw"] = [c.strip() for c in user_response.split(",") if c.strip()]
+
+        session["step"] = "brand"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "brand",
+            "message": (
+                "Hablemos de tu marca.\n\n"
+                "🎨 ¿Como describirias el tono de tu marca? "
+                "(formal, cercano, tecnico, disruptivo, elegante...)\n\n"
+                "📱 ¿Tienes redes sociales? Pega los links de Instagram, "
+                "Facebook, LinkedIn o TikTok.\n\n"
+                "🖼️ Si tienes el link de tu logo (URL de imagen), "
+                "tambien lo puedo usar para tus reportes."
+            ),
+            "completed": False,
+        }
+
+    # ─── BRAND ──────────────────────────────────────
+    if step == "brand":
+        model, _ = selector.get_model("routing")
+        try:
+            extraction = model.invoke([
+                {"role": "system", "content": (
+                    "Extrae tono de marca, redes sociales y logo del texto.\n"
+                    "JSON: {\"brand_voice\": \"...\", \"social_urls\": "
+                    "{\"instagram\": \"\", \"facebook\": \"\", \"linkedin\": \"\", \"tiktok\": \"\"}, "
+                    "\"logo_url\": \"\"}\n"
+                    "Si no menciona alguna red, dejar string vacio.\n"
+                    "Sin markdown, sin explicacion."
+                )},
+                {"role": "user", "content": user_response}
+            ])
+            parsed = json.loads(
+                extraction.content.strip().replace("```json", "").replace("```", "")
+            )
+            company_data["brand_voice"] = parsed.get("brand_voice", "")
+            company_data["social_urls"] = parsed.get("social_urls", {})
+            company_data["logo_url"] = parsed.get("logo_url", "")
+        except Exception:
+            company_data["brand_voice"] = user_response.strip()
+            company_data["social_urls"] = {}
+            company_data["logo_url"] = ""
+
+        session["step"] = "apps"
+        session["company_data"] = company_data
+        _onboarding_sessions[empresa_id] = session
+        return {
+            "step": "apps",
+            "message": (
+                "¿Que herramientas de trabajo usa tu empresa?\n\n"
+                "📧 Email y Calendario:\n"
+                "  1️⃣ Google Workspace (Gmail, Google Calendar)\n"
+                "  2️⃣ Microsoft 365 (Outlook, calendario Outlook)\n\n"
+                "📋 Gestion de proyectos:\n"
+                "  1️⃣ Notion\n"
+                "  2️⃣ Plane\n"
+                "  3️⃣ Asana\n"
+                "  4️⃣ Otro o ninguno\n\n"
+                "Puedes responder algo como 'Google y Notion' o '2 y 3'."
+            ),
+            "completed": False,
+        }
+
+    # ─── APPS ───────────────────────────────────────
+    if step == "apps":
+        model, _ = selector.get_model("routing")
+        try:
+            extraction = model.invoke([
+                {"role": "system", "content": (
+                    "Extrae que suite de productividad y PM tool usa la empresa.\n"
+                    "JSON: {\"suite\": \"google|microsoft\", \"pm\": \"notion|plane|asana|none\"}\n"
+                    "Reglas: '1' o 'gmail' o 'google' = google. '2' o 'outlook' o 'microsoft' = microsoft.\n"
+                    "PM: '1' o 'notion' = notion. '2' o 'plane' = plane. '3' o 'asana' = asana. '4' o 'ninguno' o 'otro' = none.\n"
+                    "Default suite: google. Default pm: none.\n"
+                    "Sin markdown, sin explicacion."
+                )},
+                {"role": "user", "content": user_response}
+            ])
+            parsed = json.loads(
+                extraction.content.strip().replace("```json", "").replace("```", "")
+            )
+            company_data["productivity_suite"] = parsed.get("suite", "google")
+            company_data["pm_tool"] = parsed.get("pm", "none")
+        except Exception:
+            company_data["productivity_suite"] = "google"
+            company_data["pm_tool"] = "none"
+
         session["step"] = "interests"
         session["company_data"] = company_data
         _onboarding_sessions[empresa_id] = session
         return {
             "step": "interests",
             "message": (
-                "¿Qué información te importa más a TI como administrador?\n\n"
+                "¿Que informacion te importa mas a TI como administrador?\n\n"
                 "📊 Ventas y facturación\n"
                 "💰 Cartera y cuentas por cobrar\n"
                 "📦 Inventario y stock\n"

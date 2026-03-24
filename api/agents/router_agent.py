@@ -24,16 +24,16 @@ class RouterState(TypedDict, total=False):
 
 ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 
-- "calendar" -> Agenda, reuniones, citas, horarios
+- "calendar" -> Agenda, reuniones, citas, horarios, eventos
 - "email" -> Correo, emails, enviar, responder
 - "data_query" -> Dato puntual de UN reporte: "cuanto vendimos ayer", "margen del ultimo reporte", "clientes nuevos esta semana"
 - "data_consolidation" -> Agregar MULTIPLES reportes de un periodo: "reporte anual", "consolidado trimestral", "como fue el año", "tendencias del semestre", "resumen de los ultimos 6 meses", "comparar Q1 vs Q2", "evolucion de ventas 2025"
 - "excel_analysis" -> SOLO si has_file=true y file_type=excel
 - "image_analysis" -> SOLO si has_file=true y file_type=image
-- "notion" -> Buscar/leer/crear en Notion
-- "project" -> Plane, tareas, issues, sprints, tablero
+- "notion" -> Buscar/leer/crear en Notion, bases de datos de Notion
+- "project" -> Tareas, issues, sprints, tablero, proyectos, Plane, backlog. TAMBIEN cuando preguntan en qué proyectos/tareas participa una persona, qué tiene asignado alguien, o el estado de trabajo de alguien.
 - "prospecting" -> Perfilar cliente o empresa
-- "team" -> Gestion de equipo
+- "team" -> Gestion de equipo interno (roles, permisos, miembros)
 - "action" -> Ejecutar accion concreta
 - "briefing" -> Briefing ejecutivo o resumen diario
 - "conversational" -> Saludo, charla casual o pregunta general
@@ -41,6 +41,17 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 DIFERENCIA CLAVE:
 - data_query = consulta sobre dato especifico o reporte individual
 - data_consolidation = analisis que cruza multiples reportes o periodos largos
+- project = cualquier cosa relacionada con tareas, issues, proyectos, o participación de personas en proyectos
+
+EJEMPLOS:
+- "en qué proyectos participa Oswaldo?" → project
+- "qué tareas tiene Carlos?" → project
+- "muéstrame las tareas pendientes" → project
+- "quién está asignado al sprint?" → project
+- "busca a María en notion" → notion
+- "qué hay en la base de datos de clientes en notion?" → notion
+- "reuniones de mañana" → calendar
+- "eventos del proyecto X" → calendar
 
 Default si no estas seguro: "data_query"
 

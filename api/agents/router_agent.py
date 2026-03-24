@@ -31,8 +31,9 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "excel_analysis" -> SOLO si has_file=true y file_type=excel
 - "image_analysis" -> SOLO si has_file=true y file_type=image
 - "notion" -> Buscar/leer/crear en Notion, bases de datos de Notion
-- "project" -> Tareas, issues, sprints, tablero, proyectos, Plane, backlog. TAMBIEN cuando preguntan en qué proyectos/tareas participa una persona, qué tiene asignado alguien, o el estado de trabajo de alguien.
-- "prospecting" -> Perfilar cliente o empresa
+- "project" -> Gestión de tareas/issues/sprints en general: "tareas pendientes", "backlog del sprint", "crear tarea", "actualizar issue". NO usar cuando preguntan por una persona específica.
+- "entity_360" -> Cuando preguntan POR una persona o empresa específica: "háblame de Juan", "qué sabes de Empresa X", "en qué participa Oswaldo", "qué relación tenemos con María", "todo sobre Carlos". Incluye preguntas sobre participación en proyectos, tareas asignadas, reuniones, emails — cualquier cosa que pida información CRUZADA sobre una entidad.
+- "prospecting" -> Perfilar un cliente o empresa NUEVA que Ada no conoce: "perfila a empresa X", "investiga a este prospecto". NO usar cuando preguntan sobre alguien que ya está en el sistema.
 - "team" -> Gestion de equipo interno (roles, permisos, miembros)
 - "action" -> Ejecutar accion concreta
 - "briefing" -> Briefing ejecutivo o resumen diario
@@ -41,13 +42,19 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 DIFERENCIA CLAVE:
 - data_query = consulta sobre dato especifico o reporte individual
 - data_consolidation = analisis que cruza multiples reportes o periodos largos
-- project = cualquier cosa relacionada con tareas, issues, proyectos, o participación de personas en proyectos
+- project = gestión de tareas/issues en general, sin referirse a una persona específica
+- entity_360 = información cruzada sobre una persona o empresa específica
 
 EJEMPLOS:
-- "en qué proyectos participa Oswaldo?" → project
-- "qué tareas tiene Carlos?" → project
+- "háblame de Oswaldo Gutierrez" → entity_360
+- "qué sabes de Insights 4.0?" → entity_360
+- "en qué proyectos participa María?" → entity_360
+- "todo sobre Carlos Restrepo" → entity_360
+- "qué relación tenemos con esa empresa?" → entity_360
+- "qué tareas tiene Carlos?" → entity_360
 - "muéstrame las tareas pendientes" → project
 - "quién está asignado al sprint?" → project
+- "crear tarea en Plane" → project
 - "busca a María en notion" → notion
 - "qué hay en la base de datos de clientes en notion?" → notion
 - "reuniones de mañana" → calendar
@@ -68,6 +75,7 @@ INTENT_AGENT_MAP = {
     "image_analysis": "image_analyst",
     "notion": "notion_agent",
     "project": "project_agent",
+    "entity_360": "entity_360_agent",
     "prospecting": "prospecting_agent",
     "team": "team_agent",
     "action": "chat_agent",

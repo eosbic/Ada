@@ -25,11 +25,22 @@ async def list_reports(
     archived: bool = False,
     limit: int = Query(default=20, le=100),
     offset: int = 0,
+    user_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Lista reportes de una empresa. El frontend consume esto para la bóveda."""
 
-    query = """
+    # RBAC filter
+    rbac_clause = ""
+    rbac_params = {}
+    if user_id:
+        try:
+            from api.services.rbac_service import build_sql_rbac_clause
+            rbac_clause, rbac_params = build_sql_rbac_clause(user_id, empresa_id)
+        except Exception:
+            pass
+
+    query = f"""
         SELECT id, thread_id, title, report_type, source_file,
                markdown_content, metrics_summary, alerts,
                generated_by, is_archived, requires_action,
@@ -37,8 +48,9 @@ async def list_reports(
         FROM ada_reports
         WHERE empresa_id = :empresa_id
         AND is_archived = :archived
+        {rbac_clause}
     """
-    params = {"empresa_id": empresa_id, "archived": archived}
+    params = {"empresa_id": empresa_id, "archived": archived, **rbac_params}
 
     if report_type:
         query += " AND report_type = :report_type"
@@ -110,26 +122,38 @@ async def search_reports(
     empresa_id: str,
     q: str,
     limit: int = Query(default=10, le=50),
+    user_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Búsqueda full-text dentro de reportes (estilo Obsidian)."""
+
+    # RBAC filter
+    rbac_clause = ""
+    rbac_params = {}
+    if user_id:
+        try:
+            from api.services.rbac_service import build_sql_rbac_clause
+            rbac_clause, rbac_params = build_sql_rbac_clause(user_id, empresa_id)
+        except Exception:
+            pass
 
     # Convertir query a tsquery
     search_terms = " & ".join(q.strip().split())
 
     result = await db.execute(
-        text("""
+        text(f"""
             SELECT id, title, report_type, source_file,
                    ts_rank(search_vector, to_tsquery('pg_catalog.spanish', :query)) as rank,
                    substring(markdown_content, 1, 300) as preview,
                    created_at
             FROM ada_reports
             WHERE empresa_id = :empresa_id
+            {rbac_clause}
             AND search_vector @@ to_tsquery('pg_catalog.spanish', :query)
             ORDER BY rank DESC
             LIMIT :limit
         """),
-        {"empresa_id": empresa_id, "query": search_terms, "limit": limit},
+        {"empresa_id": empresa_id, "query": search_terms, "limit": limit, **rbac_params},
     )
     rows = result.fetchall()
 
@@ -149,10 +173,24 @@ async def search_reports(
 
 
 @router.get("/entities/{entity_name}/360")
-async def entity_360_view(entity_name: str, empresa_id: str):
+async def entity_360_view(entity_name: str, empresa_id: str, user_id: Optional[str] = None):
     """Vista 360° de una entidad: todas sus menciones en todas las fuentes."""
     from api.services.graph_navigator import get_entity_360
     result = get_entity_360(entity_name, empresa_id)
+
+    # RBAC: filtrar source_types si user_id proporcionado
+    if user_id and result.get("by_source"):
+        try:
+            from api.services.rbac_service import get_report_type_filter
+            allowed = get_report_type_filter(empresa_id, user_id)
+            if "ALL" not in allowed:
+                filtered = {k: v for k, v in result["by_source"].items() if k in allowed}
+                result["by_source"] = filtered
+                result["source_types"] = list(filtered.keys())
+                result["total_mentions"] = sum(len(v) for v in filtered.values())
+        except Exception:
+            pass
+
     return {"entity": entity_name, "empresa_id": empresa_id, **result}
 
 

@@ -19,7 +19,7 @@ def _add_source(sources: List[Dict], name: str, detail: str, confidence: float):
     sources.append({"name": name, "detail": detail, "confidence": confidence})
 
 
-async def collect_multi_source_context(message: str, empresa_id: str, intent: str = "data_query") -> Dict:
+async def collect_multi_source_context(message: str, empresa_id: str, intent: str = "data_query", user_id: str = "") -> Dict:
     query = (message or "").strip()
     sources: List[Dict] = []
     chunks: List[str] = []
@@ -32,7 +32,7 @@ async def collect_multi_source_context(message: str, empresa_id: str, intent: st
     if empresa_id and query:
         try:
             tried_qdrant_reports = True
-            qdrant_reports = search_reports_qdrant(query, empresa_id, limit=4)
+            qdrant_reports = search_reports_qdrant(query, empresa_id, limit=4, user_id=user_id)
             if qdrant_reports:
                 chunks.append("## Qdrant Excel Reports\n" + "\n\n".join(qdrant_reports))
                 _add_source(sources, "qdrant_excel_reports", f"{len(qdrant_reports)} hallazgos", 0.86)
@@ -41,7 +41,7 @@ async def collect_multi_source_context(message: str, empresa_id: str, intent: st
 
         try:
             tried_vector_store1 = True
-            vector_store_docs = search_vector_store1(query, empresa_id, limit=4)
+            vector_store_docs = search_vector_store1(query, empresa_id, limit=4, user_id=user_id)
             if vector_store_docs:
                 chunks.append("## Qdrant Vector Store1\n" + "\n\n".join(vector_store_docs))
                 _add_source(sources, "qdrant_vector_store1", f"{len(vector_store_docs)} hallazgos", 0.82)
@@ -53,7 +53,7 @@ async def collect_multi_source_context(message: str, empresa_id: str, intent: st
     # 2) Base SQL de reportes (adicional)
     if empresa_id and query:
         try:
-            sql_reports = search_reports(query, empresa_id)
+            sql_reports = search_reports(query, empresa_id, user_id=user_id)
             if sql_reports:
                 chunks.append("## PostgreSQL Reports\n" + "\n\n".join(sql_reports[:3]))
                 _add_source(sources, "postgres_reports", f"{len(sql_reports)} hallazgos", 0.78)

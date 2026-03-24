@@ -68,6 +68,17 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 2. Registrar en `mcp_host.MCP_SERVERS` con `category="generic_pm"`
 3. Agregar provider name a `/connect-service` en `oauth.py` y a `_resolve_pm_agent` en `agent_runner.py`
 
+## Entity 360° — Vista en tiempo real
+Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), guarda un mini-reporte en `ada_reports` con `report_type` especifico: `email_summary`, `calendar_event_summary`, `pm_task_summary`, `notion_summary`. El KG pipeline existente (`auto_tag` → `extract_entities` → `weave_links`) conecta estos rastros con los reportes de analisis automaticamente. Zero tablas nuevas.
+
+`trail_service.py` centraliza la logica de "dejar rastro". Funciones: `leave_email_trail`, `leave_calendar_trail`, `leave_pm_trail`, `leave_notion_trail`.
+
+**Vista 360°:** `graph_navigator.get_entity_360()` busca una entidad en TODOS los `report_types` de `ada_reports`. `tool_orchestrator` la inyecta automaticamente cuando detecta nombres propios en el query del usuario.
+
+**API:** `GET /api/v1/entities/{name}/360?empresa_id=yyy`
+
+**Agentes que dejan rastro:** `briefing_agent` (calendar+email+notion), `morning_brief_agent` (calendar+email+tasks), `plane_agent` (tasks), `notion_agent` (searches+queries), `generic_pm_agent` (tasks).
+
 ## Convenciones
 - Async everywhere (excepto `upload.py` por bug uvloop)
 - NUNCA hardcodear API keys — todo en `.env`
@@ -115,7 +126,7 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `entity_extractor.py` — Gemini Flash extrae clientes/productos/personas
 - `link_weaver.py` — Crea edges bidireccionales, clasifica tipo de enlace
 - `auto_tagger.py` — Tags semánticos con taxonomía controlada (17 categorías)
-- `graph_navigator.py` — Traversal 1-hop bidireccional por `report_links`
+- `graph_navigator.py` — Traversal 1-hop bidireccional por `report_links` + vista 360° por entidad
 
 ## Services clave
 - `provider_router.py` — Google vs M365 por tenant
@@ -127,6 +138,7 @@ Los agentes (`calendar_agent`, `email_agent`) llaman a los services (`calendar_s
 - `chart_service.py`
 - `industry_protocols.py`
 - `kg_pipeline.py` — Helper reutilizable: `run_kg_pipeline(report_id, empresa_id, content, alerts)`. Threading aislado.
+- `trail_service.py` — Guarda rastros de datos externos en `ada_reports` + ejecuta KG pipeline.
 
 ## Workers (en `api/workers/`)
 - `event_worker` — Procesa eventos async

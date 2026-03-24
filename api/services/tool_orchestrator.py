@@ -119,6 +119,24 @@ async def collect_multi_source_context(message: str, empresa_id: str, intent: st
         except Exception as e:
             print(f"ORCHESTRATOR notion error: {e}")
 
+    # 4) Contexto 360° de entidades mencionadas
+    if empresa_id and query:
+        try:
+            from api.services.graph_navigator import get_entity_360_text
+
+            words = [w for w in query.split() if len(w) > 3 and w[0].isupper()]
+            entity_contexts = []
+            for word in words[:3]:
+                ctx = get_entity_360_text(word, empresa_id)
+                if ctx:
+                    entity_contexts.append(ctx)
+
+            if entity_contexts:
+                chunks.append("## Contexto 360\n" + "\n\n".join(entity_contexts))
+                _add_source(sources, "entity_360", "contexto cruzado de entidades", 0.88)
+        except Exception as e:
+            print(f"ORCHESTRATOR entity_360 error: {e}")
+
     return {
         "context_text": "\n\n".join(chunks) if chunks else "",
         "sources_used": sources,

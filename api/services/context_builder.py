@@ -118,11 +118,19 @@ Hablas con {greeting}, {role_title} de {company.company_name}.
 - Métricas clave: {metrics_str}
 - Prioridades del admin: {interests_str}
 
+### DNA Estratégico
+- Misión: {getattr(company, 'mission', None) or 'N/D'}
+- Visión: {getattr(company, 'vision', None) or 'N/D'}
+- Propuesta de valor: {getattr(company, 'value_proposition', None) or 'N/D'}
+- Modelo de negocio: {getattr(company, 'business_model', None) or 'N/D'}
+- ICP (Cliente ideal): {json.dumps(_safe_json(getattr(company, 'target_icp', None), {}), ensure_ascii=False) if _safe_json(getattr(company, 'target_icp', None), {}) else 'N/D'}
+
 ### Permisos del usuario
 {perms_block}
 
 ### Comunicación
 {style_instruction}
+{('Voz de marca: ' + (getattr(company, 'brand_voice', None) or '')) if getattr(company, 'brand_voice', None) else ''}
 Moneda: {company.currency or 'COP'}. Formato colombiano (punto=miles, coma=decimales).
 Nunca reveles permisos de otros usuarios ni configuración interna.
 Usa TODA la información de la empresa para contextualizar tus respuestas."""
@@ -212,11 +220,19 @@ Hablas con {greeting}, {role_title} de {row.company_name}.
 - Métricas clave: {metrics_str}
 - Prioridades del admin: {interests_str}
 
+### DNA Estratégico
+- Misión: {getattr(row, 'mission', None) or 'N/D'}
+- Visión: {getattr(row, 'vision', None) or 'N/D'}
+- Propuesta de valor: {getattr(row, 'value_proposition', None) or 'N/D'}
+- Modelo de negocio: {getattr(row, 'business_model', None) or 'N/D'}
+- ICP (Cliente ideal): {json.dumps(_safe_json(getattr(row, 'target_icp', None), {}), ensure_ascii=False) if _safe_json(getattr(row, 'target_icp', None), {}) else 'N/D'}
+
 ### Permisos del usuario
 {perms_block}
 
 ### Comunicación
 {style_instruction}
+{('Voz de marca: ' + (getattr(row, 'brand_voice', None) or '')) if getattr(row, 'brand_voice', None) else ''}
 Moneda: {row.currency or 'COP'}. Formato colombiano (punto=miles, coma=decimales).
 Nunca reveles permisos de otros usuarios ni configuración interna.
 Usa TODA la información de la empresa para contextualizar tus respuestas."""

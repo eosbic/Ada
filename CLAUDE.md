@@ -88,6 +88,8 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 
 `tenant_app_config` — Tracking de que provider usa cada empresa por servicio (email, calendar, drive, pm).
 
+Onboarding expandido llena automaticamente todos los campos DNA. Post-procesamiento en thread aislado: web scraping, analisis de competidores, generacion de agent_configs, setup de tenant_app_config.
+
 ### Endpoints DNA
 - `GET /config/dna/{empresa_id}` — DNA completo
 - `POST /config/dna/update` — Actualizar campos
@@ -134,7 +136,7 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 - `consolidation_agent`
 - `image_analyst` / `image_agent`
 - `document_agent`
-- `onboarding_agent`
+- `onboarding_agent` — 14 pasos: identidad, propuesta de valor, productos, ubicacion, sitio web (auto-scrape), ICP, competidores (auto-analisis), marca, apps, intereses, estilo. Post-onboarding: scraping web + analisis competidores + generacion agent_configs en background.
 - `alert_agent`
 
 ## MCP Servers en `mcp_host.py`

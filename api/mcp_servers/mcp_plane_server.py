@@ -52,7 +52,10 @@ async def plane_list_issues(
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, headers=headers, params={"per_page": max_results}, timeout=15)
+        resp = await client.get(url, headers=headers, params={
+            "per_page": max_results,
+            "expand": "assignees,state",
+        }, timeout=15)
 
     if resp.status_code != 200:
         return []
@@ -66,12 +69,26 @@ async def plane_list_issues(
         state_name = state_detail.get("name", "")
         state_group = state_detail.get("group", "")
 
-        assignee_detail = i.get("assignee_detail") or {}
+        # Extraer assignee - cubrir multiples formatos de la API de Plane
         assignee_name = ""
-        if isinstance(assignee_detail, dict):
+        # Formato 1: assignee_detail (objeto)
+        assignee_detail = i.get("assignee_detail") or {}
+        if isinstance(assignee_detail, dict) and assignee_detail:
             assignee_name = assignee_detail.get("display_name", "") or assignee_detail.get("first_name", "")
-        elif isinstance(i.get("assignees_detail"), list) and i["assignees_detail"]:
-            assignee_name = i["assignees_detail"][0].get("display_name", "")
+        # Formato 2: assignees_detail (lista de objetos)
+        if not assignee_name:
+            assignees_detail = i.get("assignees_detail") or i.get("assignees") or []
+            if isinstance(assignees_detail, list):
+                names = []
+                for a in assignees_detail:
+                    if isinstance(a, dict):
+                        n = a.get("display_name", "") or a.get("first_name", "")
+                        if n:
+                            names.append(n)
+                assignee_name = ", ".join(names)
+        # Formato 3: assignee como string directo
+        if not assignee_name and isinstance(i.get("assignee"), str) and i["assignee"]:
+            assignee_name = i["assignee"]
 
         issues.append({
             "id": i.get("id"), "name": i.get("name"),
@@ -95,7 +112,11 @@ async def plane_list_issues(
     # Filtrar por asignado
     if assignee_filter:
         assignee_lower = assignee_filter.lower()
-        issues = [i for i in issues if assignee_lower in i.get("assignee", "").lower()]
+        issues = [i for i in issues if (
+            assignee_lower in i.get("assignee", "").lower() or
+            assignee_lower in i.get("name", "").lower() or
+            assignee_lower in i.get("description", "").lower()
+        )]
 
     return issues
 

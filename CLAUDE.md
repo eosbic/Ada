@@ -79,6 +79,26 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 
 **Agentes que dejan rastro:** `briefing_agent` (calendar+email+notion), `morning_brief_agent` (calendar+email+tasks), `plane_agent` (tasks), `notion_agent` (searches+queries), `generic_pm_agent` (tasks).
 
+## Company DNA
+`ada_company_profile` extendida con campos DNA: `mission`, `vision`, `value_proposition`, `business_model`, `brand_voice`, `target_icp`, `product_catalog`, `agent_configs`, `website_url`, `website_summary`, `social_urls`, `sales_cycle_days`, `success_cases`, `logo_url`, `brand_colors`, `productivity_suite`, `pm_tool`, `extra_apps`, `onboarding_complete`.
+
+`dna_loader.py` es el servicio central — TODO agente usa `load_company_dna(empresa_id)` para cargar contexto. `dna_generator.py` genera `agent_configs` automaticamente con Gemini Flash basandose en el DNA.
+
+`context_builder.py` enriquecido: inyecta mision, vision, propuesta de valor, modelo de negocio, ICP y voz de marca en cada system prompt.
+
+`tenant_app_config` — Tracking de que provider usa cada empresa por servicio (email, calendar, drive, pm).
+
+### Endpoints DNA
+- `GET /config/dna/{empresa_id}` — DNA completo
+- `POST /config/dna/update` — Actualizar campos
+- `POST /config/dna/generate-configs` — Generar agent_configs
+- `POST /config/dna/analyze-web` — Scrapear y analizar sitio web
+- `POST /config/dna/analyze-competitors` — Analizar competidores
+- `POST /config/apps/setup` — Configurar providers por servicio
+
+### Industry Protocols
+`industry_protocols.py` — 15 protocolos de industria: construccion, retail, salud, agricultura, servicios, tecnologia, educacion, alimentos, transporte, inmobiliario, financiero, consultoria, restaurante, manufactura, generic.
+
 ## Convenciones
 - Async everywhere (excepto `upload.py` por bug uvloop)
 - NUNCA hardcodear API keys — todo en `.env`
@@ -95,7 +115,8 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 - `tenant_credentials` — OAuth2 cifrado Fernet (Google + Microsoft + Notion + Plane)
 - `budget_limits` — presupuesto mensual por empresa
 - `token_usage_log` — log granular de consumo de tokens
-- `ada_company_profile` — perfil de empresa (onboarding)
+- `ada_company_profile` — perfil de empresa + Company DNA (mission, vision, agent_configs, etc.)
+- `tenant_app_config` — provider por servicio por empresa (email→google, pm→asana, etc.)
 - `team_members` — permisos por usuario
 
 ## Agentes (AGENT_REGISTRY en agent_runner.py)
@@ -139,6 +160,8 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 - `industry_protocols.py`
 - `kg_pipeline.py` — Helper reutilizable: `run_kg_pipeline(report_id, empresa_id, content, alerts)`. Threading aislado.
 - `trail_service.py` — Guarda rastros de datos externos en `ada_reports` + ejecuta KG pipeline.
+- `dna_loader.py` — Servicio central para cargar Company DNA de `ada_company_profile`.
+- `dna_generator.py` — Genera `agent_configs` con Gemini Flash + analiza web/competidores.
 
 ## Workers (en `api/workers/`)
 - `event_worker` — Procesa eventos async

@@ -100,6 +100,15 @@ async def execute_notion_tool(state: NotionState) -> dict:
 
     result = await mcp_host.call_tool_by_name(tool_name, tool_args, empresa_id)
 
+    try:
+        from api.services.trail_service import leave_notion_trail
+        if empresa_id and tool_name == "notion_search" and isinstance(result, list) and result:
+            leave_notion_trail(empresa_id, result, search_query=tool_args.get("query", ""))
+        elif empresa_id and tool_name == "notion_query_database" and isinstance(result, list) and result:
+            leave_notion_trail(empresa_id, [{"title": str(r), "type": "database_row"} for r in result[:10]], search_query="database query")
+    except Exception:
+        pass
+
     if isinstance(result, dict) and "error" in result:
         return {"response": f"Error: {result['error']}", "tool_result": result}
 

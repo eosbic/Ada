@@ -55,6 +55,13 @@ async def fetch_today_calendar(state: MorningState) -> dict:
         else:
             cal_text = "📅 Sin reuniones hoy. Agenda libre."
 
+        try:
+            from api.services.trail_service import leave_calendar_trail
+            if events:
+                leave_calendar_trail(empresa_id, events, search_context="morning brief agenda")
+        except Exception:
+            pass
+
         print(f"MORNING BRIEF: {len(events)} eventos hoy")
         return {"calendar_events": cal_text}
 
@@ -79,6 +86,13 @@ async def fetch_unread_emails(state: MorningState) -> dict:
             ])
         else:
             email_text = "📧 Bandeja al día. Sin emails urgentes."
+
+        try:
+            from api.services.trail_service import leave_email_trail
+            if emails:
+                leave_email_trail(empresa_id, emails, search_query="morning brief unread")
+        except Exception:
+            pass
 
         print(f"MORNING BRIEF: {len(emails)} emails no leídos")
         return {"unread_emails": email_text}
@@ -143,6 +157,7 @@ async def fetch_pending_tasks(state: MorningState) -> dict:
         projects = await mcp_host.call_tool_by_name("plane_list_projects", {}, empresa_id)
 
         tasks_text = ""
+        all_tasks = []
         if isinstance(projects, list) and projects:
             for project in projects[:2]:
                 issues = await mcp_host.call_tool_by_name(
@@ -151,11 +166,19 @@ async def fetch_pending_tasks(state: MorningState) -> dict:
                     empresa_id
                 )
                 if isinstance(issues, list):
+                    all_tasks.extend(issues)
                     urgent = [i for i in issues if i.get("priority") in ("urgent", "high")]
                     if urgent:
                         for i in urgent[:3]:
                             emoji = "🔴" if i.get("priority") == "urgent" else "🟠"
                             tasks_text += f"{emoji} {i.get('name', '')} ({project.get('name', '')})\n"
+
+        try:
+            from api.services.trail_service import leave_pm_trail
+            if all_tasks:
+                leave_pm_trail(empresa_id, all_tasks, project_name="morning brief", pm_provider="plane")
+        except Exception:
+            pass
 
         if not tasks_text:
             tasks_text = "✅ Sin tareas urgentes."

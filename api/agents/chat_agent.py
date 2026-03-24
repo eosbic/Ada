@@ -226,24 +226,48 @@ async def _lookup_telegram_facts(empresa_id: str, message: str) -> tuple[str, di
 async def retrieve_context(state: ChatState) -> dict:
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
-
     user_id = state.get("user_id", "")
 
-    memories = search_memory(message, empresa_id)
-    reports_sql = search_reports(message, empresa_id) if empresa_id else []
-
-    # Historial conversacional persistente
+    # 1. Cargar historial primero
     history = get_history(empresa_id, user_id) if (empresa_id and user_id) else []
 
-    # consulta dual obligatoria
+    # 2. Detectar contexto activo ANTES de buscar
+    active_context_name = ""
+    if history:
+        _context_keywords = [
+            "informe", "reporte", "archivo", "excel",
+            "analisis de", "análisis de", "ventas de", "distribuidora",
+            "reporte de ventas",
+        ]
+        for msg in reversed(history[-4:]):
+            msg_text = (msg.get("content", "") or "").lower()
+            for kw in _context_keywords:
+                idx = msg_text.find(kw)
+                if idx >= 0:
+                    after = msg_text[idx + len(kw):].strip().strip(":").strip()
+                    name_part = after.split("\n")[0].split(".")[0].strip()[:60]
+                    if name_part and len(name_part) > 3:
+                        active_context_name = name_part
+                        break
+            if active_context_name:
+                break
+
+    # 3. Enriquecer query si hay contexto activo
+    search_query = f"{message} {active_context_name}".strip() if active_context_name else message
+    print(f"CHAT AGENT: search_query='{search_query[:80]}' active_context='{active_context_name}'")
+
+    # 4. Buscar con query enriquecida
+    memories = search_memory(search_query, empresa_id)
+    reports_sql = search_reports(search_query, empresa_id) if empresa_id else []
+
     try:
-        reports_qdrant = search_reports_qdrant(message, empresa_id, limit=4) if empresa_id else []
+        reports_qdrant = search_reports_qdrant(search_query, empresa_id, limit=4) if empresa_id else []
     except Exception as e:
         print(f"CHAT qdrant_reports error: {e}")
         reports_qdrant = []
 
     try:
-        vector_docs = search_vector_store1(message, empresa_id, limit=4) if empresa_id else []
+        vector_docs = search_vector_store1(search_query, empresa_id, limit=4) if empresa_id else []
     except Exception as e:
         print(f"CHAT vector_store1 error: {e}")
         vector_docs = []
@@ -259,7 +283,7 @@ async def retrieve_context(state: ChatState) -> dict:
             from api.database import sync_engine
 
             report_ids = []
-            clean = re.sub(r'[^a-záéíóúñA-ZÁÉÍÓÚÑ0-9\s]', ' ', message)
+            clean = re.sub(r'[^a-záéíóúñA-ZÁÉÍÓÚÑ0-9\s]', ' ', search_query)
             words = [w for w in clean.strip().split() if len(w) > 3]
 
             with sync_engine.connect() as conn:
@@ -293,29 +317,12 @@ async def retrieve_context(state: ChatState) -> dict:
     context_chunks = []
     sources_used = list(state.get("sources_used", []))
 
+    if active_context_name:
+        context_chunks.insert(0, f"## CONTEXTO ACTIVO\nLa conversacion actual trata sobre: {active_context_name}. Prioriza datos de este reporte.")
+
     if memories:
         context_chunks.append("## Memoria conversacional\n" + "\n\n".join(memories[:4]))
         sources_used.append({"name": "agent_memory", "detail": f"{len(memories)} hallazgos", "confidence": 0.65})
-
-    if history:
-        # Detectar contexto activo: si los mensajes recientes mencionan un reporte/archivo
-        _context_keywords = ["informe", "reporte", "archivo", "excel", "analisis de", "análisis de"]
-        active_context_name = ""
-        for msg in reversed(history[-4:]):
-            msg_text = (msg.get("content", "") or "").lower()
-            for kw in _context_keywords:
-                idx = msg_text.find(kw)
-                if idx >= 0:
-                    # Extraer nombre que acompaña al keyword
-                    after = msg_text[idx + len(kw):].strip().strip(":").strip()
-                    name_part = after.split("\n")[0].split(".")[0].strip()[:60]
-                    if name_part and len(name_part) > 3:
-                        active_context_name = name_part
-                        break
-            if active_context_name:
-                break
-        if active_context_name:
-            context_chunks.insert(0, f"## CONTEXTO ACTIVO\nLa conversacion actual trata sobre: {active_context_name}. Prioriza datos de este reporte.")
 
     if reports_sql:
         context_chunks.append("## PostgreSQL reports\n" + "\n\n".join(reports_sql[:3]))

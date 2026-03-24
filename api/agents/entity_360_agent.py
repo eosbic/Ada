@@ -58,15 +58,20 @@ CONTEXTO CONVERSACIONAL:
 MENSAJE ACTUAL:
 {message}
 
+REGLAS CRÍTICAS DE RESOLUCIÓN DE PRONOMBRES:
+1. Si el mensaje usa "él", "ella", "esa persona", "esa empresa", "de él", "de ella",
+   SIEMPRE se refiere a la ÚLTIMA persona o empresa mencionada en el contexto conversacional.
+2. NUNCA resuelvas un pronombre como el usuario que está hablando. El usuario pregunta
+   SOBRE alguien más, no sobre sí mismo.
+3. Si en el contexto reciente se habló de "Oswaldo Gutiérrez" y el usuario dice
+   "dame la información completa de él", la entidad es "Oswaldo Gutiérrez".
+4. Si no hay contexto previo y el mensaje es ambiguo, responde con entity_name vacío.
+
 Responde SOLO JSON:
 {{
     "entity_name": "nombre completo de la persona o empresa",
     "entity_type": "person o company"
 }}
-
-Si el mensaje usa pronombres (él, ella, esa persona, esa empresa), resuélvelos
-usando el contexto conversacional. Si no puedes determinar la entidad, responde:
-{{"entity_name": "", "entity_type": ""}}
 
 Sin markdown, sin explicación."""
 

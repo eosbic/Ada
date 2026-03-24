@@ -149,15 +149,25 @@ def store_report(text: str, empresa_id: str, file_name: str, report_type: str = 
     )
 
 
-def search_reports_qdrant(query: str, empresa_id: str, limit: int = 5) -> list:
+def search_reports_qdrant(query: str, empresa_id: str, limit: int = 5, user_id: str = "") -> list:
     try:
         vector = embeddings.embed_query(query)
+        must_conditions = [FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
+
+        if user_id:
+            try:
+                from api.services.rbac_service import get_report_type_filter
+                from qdrant_client.models import MatchAny
+                allowed = get_report_type_filter(empresa_id, user_id)
+                if allowed and "ALL" not in allowed:
+                    must_conditions.append(FieldCondition(key="report_type", match=MatchAny(any=allowed)))
+            except Exception:
+                pass
+
         results = client.query_points(
             collection_name=REPORTS_COLLECTION,
             query=vector,
-            query_filter=Filter(
-                must=[FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
-            ),
+            query_filter=Filter(must=must_conditions),
             limit=limit
         )
         return [r.payload.get("text", "") for r in results.points if r.payload.get("text")]
@@ -166,15 +176,25 @@ def search_reports_qdrant(query: str, empresa_id: str, limit: int = 5) -> list:
         return []
 
 
-def search_vector_store1(query: str, empresa_id: str, limit: int = 5) -> list:
+def search_vector_store1(query: str, empresa_id: str, limit: int = 5, user_id: str = "") -> list:
     try:
         vector = embeddings.embed_query(query)
+        must_conditions = [FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
+
+        if user_id:
+            try:
+                from api.services.rbac_service import get_report_type_filter
+                from qdrant_client.models import MatchAny
+                allowed = get_report_type_filter(empresa_id, user_id)
+                if allowed and "ALL" not in allowed:
+                    must_conditions.append(FieldCondition(key="doc_type", match=MatchAny(any=allowed)))
+            except Exception:
+                pass
+
         results = client.query_points(
             collection_name=VECTOR_STORE1_COLLECTION,
             query=vector,
-            query_filter=Filter(
-                must=[FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
-            ),
+            query_filter=Filter(must=must_conditions),
             limit=limit
         )
         return [r.payload.get("text", "") for r in results.points if r.payload.get("text")]
@@ -202,13 +222,23 @@ def store_image_report(text: str, empresa_id: str, file_name: str, metadata: dic
     )
 
 
-def search_reports(query: str, empresa_id: str = "") -> list:
-    """Search reports in PostgreSQL with full-text + ILIKE fallback."""
+def search_reports(query: str, empresa_id: str = "", user_id: str = "") -> list:
+    """Search reports in PostgreSQL with full-text + ILIKE fallback. RBAC filter if user_id provided."""
     from api.database import sync_engine
     from sqlalchemy import text as sql_text
 
     if not empresa_id:
         return []
+
+    # Build RBAC clause
+    rbac_clause = ""
+    rbac_params = {}
+    if user_id:
+        try:
+            from api.services.rbac_service import build_sql_rbac_clause
+            rbac_clause, rbac_params = build_sql_rbac_clause(user_id, empresa_id)
+        except Exception:
+            pass
 
     try:
         clean = re.sub(r"[^a-zA-Z0-9\s]", " ", query)
@@ -220,17 +250,18 @@ def search_reports(query: str, empresa_id: str = "") -> list:
 
             try:
                 result = conn.execute(
-                    sql_text("""
+                    sql_text(f"""
                         SELECT title, source_file, markdown_content, alerts, created_at,
                                ts_rank(search_vector, to_tsquery('pg_catalog.spanish', :query)) as rank
                         FROM ada_reports
                         WHERE empresa_id = :empresa_id
                         AND is_archived = FALSE
+                        {rbac_clause}
                         AND search_vector @@ to_tsquery('pg_catalog.spanish', :query)
                         ORDER BY rank DESC
                         LIMIT 3
                     """),
-                    {"empresa_id": empresa_id, "query": search_terms},
+                    {"empresa_id": empresa_id, "query": search_terms, **rbac_params},
                 )
                 rows = result.fetchall()
             except Exception as e:
@@ -240,12 +271,13 @@ def search_reports(query: str, empresa_id: str = "") -> list:
                 like_words = [w for w in words if len(w) > 3]
                 for word in reversed(like_words):
                     result = conn.execute(
-                        sql_text("""
+                        sql_text(f"""
                             SELECT title, source_file, markdown_content, alerts, created_at,
                                    1.0 as rank
                             FROM ada_reports
                             WHERE empresa_id = :empresa_id
                             AND is_archived = FALSE
+                            {rbac_clause}
                             AND (
                                 source_file ILIKE :like_query
                                 OR title ILIKE :like_query
@@ -254,7 +286,7 @@ def search_reports(query: str, empresa_id: str = "") -> list:
                             ORDER BY created_at DESC
                             LIMIT 3
                         """),
-                        {"empresa_id": empresa_id, "like_query": f"%{word}%"},
+                        {"empresa_id": empresa_id, "like_query": f"%{word}%", **rbac_params},
                     )
                     rows = result.fetchall()
                     if rows:
@@ -265,17 +297,18 @@ def search_reports(query: str, empresa_id: str = "") -> list:
                 try:
                     for word in like_words:
                         result = conn.execute(
-                            sql_text("""
+                            sql_text(f"""
                                 SELECT title, source_file, markdown_content, alerts, created_at,
                                        similarity(title, :word) as rank
                                 FROM ada_reports
                                 WHERE empresa_id = :empresa_id
                                 AND is_archived = FALSE
+                                {rbac_clause}
                                 AND (similarity(title, :word) > 0.2 OR similarity(source_file, :word) > 0.2)
                                 ORDER BY rank DESC
                                 LIMIT 3
                             """),
-                            {"empresa_id": empresa_id, "word": word},
+                            {"empresa_id": empresa_id, "word": word, **rbac_params},
                         )
                         rows = result.fetchall()
                         if rows:
@@ -286,16 +319,17 @@ def search_reports(query: str, empresa_id: str = "") -> list:
 
             if not rows:
                 result = conn.execute(
-                    sql_text("""
+                    sql_text(f"""
                         SELECT title, source_file, markdown_content, alerts, created_at,
                                0.1 as rank
                         FROM ada_reports
                         WHERE empresa_id = :empresa_id
                         AND is_archived = FALSE
+                        {rbac_clause}
                         ORDER BY created_at DESC
                         LIMIT 2
                     """),
-                    {"empresa_id": empresa_id},
+                    {"empresa_id": empresa_id, **rbac_params},
                 )
                 rows = result.fetchall()
 

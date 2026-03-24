@@ -162,6 +162,7 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 - `trail_service.py` — Guarda rastros de datos externos en `ada_reports` + ejecuta KG pipeline.
 - `dna_loader.py` — Servicio central para cargar Company DNA de `ada_company_profile`.
 - `dna_generator.py` — Genera `agent_configs` con Gemini Flash + analiza web/competidores.
+- `rbac_service.py` — RBAC enforcement: mapeo permissions → report_types + agentes. Filtro SQL + bloqueo de agentes.
 
 ## Workers (en `api/workers/`)
 - `event_worker` — Procesa eventos async
@@ -189,6 +190,7 @@ Cuando un agente consulta datos externos (emails, calendario, tareas, Notion), g
 - `empresa_id` SIEMPRE del JWT, nunca del body
 - Fernet AES-128 para credenciales en reposo
 - Semantic Firewall antes de cada agente
+- **RBAC enforcement real:** `rbac_service.py` mapea `permissions` de `team_members` a `report_types` y agentes permitidos. `search_reports` filtra por `report_type` segun permisos del usuario. `agent_runner` bloquea agentes no autorizados antes de ejecutar. `upload` verifica `can_upload_files`. Admin tiene acceso total siempre. `context_builder.py` inyecta permisos al prompt como segunda capa.
 
 ## Testing
 No hay tests automatizados. Testear manualmente:

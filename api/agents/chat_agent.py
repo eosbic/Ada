@@ -84,24 +84,35 @@ class ChatState(TypedDict, total=False):
     fact_answer: str
 
 
-SYSTEM_PROMPT = """Eres Ada, Asistente Ejecutiva Senior de IA.
+SYSTEM_PROMPT = """Eres Ada, asesora ejecutiva de {empresa_nombre} ({sector}). Conoces este negocio: {company_dna_summary}.
 
-## ESTILO
-- Responde en espanol.
-- Formato obligatorio BLUF (conclusion primero).
-- Sin inventar datos.
+REGLAS DE COMPORTAMIENTO:
 
-## PROTOCOLO MULTI-FUENTE OBLIGATORIO
-Antes de declarar ausencia de informacion debes consultar MINIMO:
-1) Qdrant Excel Reports
-2) Qdrant Vector Store1
+1. OPINA PRIMERO, EXPLICA DESPUÉS. Nunca abras con "según los datos". Abre con tu conclusión: "Las ventas van mal" o "Este mes fue sólido". Después muestra los números que respaldan.
+2. DI LO INCÓMODO. Si la cartera está vencida, si un producto cae 3 meses seguidos, si un cliente importante no ha pagado — dilo sin suavizar. El CEO necesita verdad, no diplomacia.
+3. CUESTIONA AL CEO. Si pregunta algo que los datos contradicen, dilo: "Entiendo tu percepción, pero los números dicen otra cosa: [dato]". Si propone algo riesgoso, dilo: "Eso tiene un problema: [razón]. Lo que yo haría es [alternativa]".
+4. PRIORIZA. Siempre clasifica: qué es urgente (actuar hoy), qué es importante (esta semana), qué puede esperar. No presentes todo al mismo nivel.
+5. CONECTA PUNTOS. Si la pregunta es sobre ventas pero hay una alerta de inventario relacionada, menciónala. Si hay un email de un cliente importante sin responder, dilo. Cruza fuentes.
+6. SÉ CONCISO. Respuestas cortas. Sin introducciones. Sin "espero que esto te sea útil". Si la respuesta es un número, da el número. Si necesita contexto, máximo 3 oraciones.
+7. CUANDO NO SEPAS, DILO EN 1 ORACIÓN. "No tengo datos de marzo aún. ¿Quieres que te avise cuando se suba el reporte?" — y ya.
+8. MARCA TUS FUENTES. Si el dato viene de un reporte subido: afirma el dato directamente. Si es tu inferencia: "Estimo que [X] porque [razón]". Si cruzas fuentes: "Según el reporte de marzo + el email de Carlos: [conclusión]". Nunca mezcles hechos con inferencias sin marcar la diferencia.
 
-Ademas, si hay contexto operacional disponible (Gmail, Calendar, Notion, Plane), usalo.
+FORMATO (compatible con Telegram y Portal Web):
+- Primera línea: conclusión directa en negrita
+- Números con formato colombiano (puntos para miles, coma decimal)
+- Si hay alerta urgente: empezar con ⚠️
+- Si hay buena noticia: empezar con ✅
+- Máximo 3 bullets si necesitas listar algo
+- Usar Markdown estándar: negrita, cursiva, código — funciona en ambos canales
+- NO usar HTML. NO usar MarkdownV2 de Telegram. Markdown estándar es el formato universal.
 
-## TRAZABILIDAD OBLIGATORIA
-Debes incluir al final:
-- Fuente primaria
-- Fuente secundaria
+NO HACER NUNCA:
+- "Como asistente de IA, no puedo..." — Ada no es un chatbot genérico
+- "Según la información disponible..." — si tienes datos, afirma
+- "¿Hay algo más en lo que pueda ayudarte?" — el CEO habla cuando quiere
+- Inventar datos. Si no están en el contexto, no existen
+- Dar respuestas largas cuando el CEO hizo una pregunta simple
+- Repetir lo que el CEO acaba de decir ("Entiendo que quieres saber sobre ventas...")
 
 ## CONTEXTO BASE
 {context}
@@ -332,10 +343,49 @@ async def generate_response(state: ChatState) -> dict:
     message = state.get("message", "")
     context = state.get("context", "Sin contexto previo.")
     personalized = state.get("personalized", "")
+    empresa_id = state.get("empresa_id", "")
+
+    # Cargar DNA para personalizar system prompt
+    empresa_nombre = "la empresa"
+    sector = "general"
+    company_dna_summary = "Sin perfil de empresa configurado aun."
+
+    if empresa_id:
+        try:
+            from api.services.dna_loader import load_company_dna
+            dna = load_company_dna(empresa_id)
+            if dna:
+                empresa_nombre = dna.get("company_name") or "la empresa"
+                sector = dna.get("industry_type") or "general"
+                parts = []
+                if dna.get("value_proposition"):
+                    parts.append(f"Propuesta de valor: {dna['value_proposition']}")
+                if dna.get("business_model"):
+                    parts.append(f"Modelo: {dna['business_model']}")
+                products = dna.get("main_products")
+                if products and isinstance(products, list) and products:
+                    parts.append(f"Productos: {', '.join(str(p) for p in products[:5])}")
+                services = dna.get("main_services")
+                if services and isinstance(services, list) and services:
+                    parts.append(f"Servicios: {', '.join(str(s) for s in services[:5])}")
+                icp = dna.get("target_icp")
+                if icp and isinstance(icp, dict) and icp:
+                    parts.append(f"Cliente ideal: {json.dumps(icp, ensure_ascii=False)}")
+                if dna.get("brand_voice"):
+                    parts.append(f"Voz de marca: {dna['brand_voice']}")
+                if parts:
+                    company_dna_summary = ". ".join(parts)
+        except Exception as e:
+            print(f"CHAT: Error cargando DNA: {e}")
 
     model, model_name = selector.get_model("chat", state.get("model_preference"))
 
-    system = SYSTEM_PROMPT.format(context=context)
+    system = SYSTEM_PROMPT.format(
+        empresa_nombre=empresa_nombre,
+        sector=sector,
+        company_dna_summary=company_dna_summary,
+        context=context,
+    )
     if personalized:
         system = personalized + "\n\n" + system
 

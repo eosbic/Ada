@@ -113,6 +113,13 @@ async def execute_tool(state: GenericPMState) -> dict:
 
     result = await mcp_host.call_generic_pm_tool(tool_name, tool_args, empresa_id)
 
+    try:
+        from api.services.trail_service import leave_pm_trail
+        if empresa_id and "list_task" in tool_name and isinstance(result, list) and result:
+            leave_pm_trail(empresa_id, result, project_name=tool_args.get("project_id", ""), pm_provider=pm_provider)
+    except Exception:
+        pass
+
     if isinstance(result, dict) and "error" in result:
         return {"response": f"Error: {result['error']}", "tool_result": result}
 

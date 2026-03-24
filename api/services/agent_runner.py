@@ -241,6 +241,27 @@ async def run_agent(
 
     routed_to = _resolve_pm_agent(empresa_id, routed_to)
 
+    # 2.5) RBAC: verificar acceso al agente
+    if empresa_id and user_id:
+        from api.services.rbac_service import check_agent_access
+        allowed, reason = check_agent_access(empresa_id, user_id, routed_to)
+        if not allowed:
+            return {
+                "response": reason,
+                "intent": intent,
+                "confidence": confidence,
+                "routed_to": "rbac_blocked",
+                "model_used": "rbac",
+                "blocked": True,
+                "output_mode": output_mode,
+                "traceability": {
+                    "primary_source": "rbac",
+                    "secondary_source": "rbac",
+                    "sources_used": [{"name": "rbac", "detail": f"agent {routed_to} blocked for user", "confidence": 1.0}],
+                    "confidence": 1.0,
+                },
+            }
+
     agent = AGENT_REGISTRY.get(routed_to)
     if not agent:
         print(f"WARNING: Agent '{routed_to}' not implemented. Using {DEFAULT_AGENT}")
@@ -252,6 +273,7 @@ async def run_agent(
         message=message,
         empresa_id=empresa_id or "",
         intent=intent,
+        user_id=user_id or "",
     )
 
     # 3.5) Plan-based model restriction

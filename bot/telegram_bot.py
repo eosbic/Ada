@@ -232,6 +232,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             note_path = _save_markdown_locally(note_file_name, note_bytes)
             print(f"TELEGRAM BOT: note saved -> {note_path}")
 
+        token = user_data.get("access_token", "")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
         async with httpx.AsyncClient(timeout=TIMEOUT_CHAT) as client:
             resp = await client.post(
                 f"{API_URL}/chat/chat",
@@ -241,6 +244,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "user_id": user_data["user_id"],
                     "source": "telegram",
                 },
+                headers=headers,
             )
 
         data = resp.json()
@@ -459,6 +463,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await processing_msg.edit_text("Procesando...")
 
+        token = user_data.get("access_token", "")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
         async with httpx.AsyncClient(timeout=TIMEOUT_CHAT) as client:
             resp = await client.post(
                 f"{API_URL}/chat/chat",
@@ -468,6 +475,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "user_id": user_data["user_id"],
                     "source": "telegram_voice",
                 },
+                headers=headers,
             )
 
         data = resp.json()

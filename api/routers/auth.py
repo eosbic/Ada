@@ -44,13 +44,24 @@ async def login(data: LoginRequest):
 @router.get("/telegram/{telegram_id}")
 async def get_user_by_telegram(telegram_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        text("SELECT id, empresa_id FROM usuarios WHERE telegram_id = :tid"),
+        text("SELECT id, empresa_id, nombre FROM usuarios WHERE telegram_id = :tid"),
         {"tid": telegram_id}
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="No registrado")
-    return {"user_id": str(row.id), "empresa_id": str(row.empresa_id)}
+
+    token = create_access_token({
+        "user_id": str(row.id),
+        "empresa_id": str(row.empresa_id)
+    })
+
+    return {
+        "user_id": str(row.id),
+        "empresa_id": str(row.empresa_id),
+        "nombre": getattr(row, "nombre", ""),
+        "access_token": token,
+    }
 
 
 @router.post("/link-telegram")

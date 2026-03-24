@@ -298,14 +298,6 @@ async def retrieve_context(state: ChatState) -> dict:
         sources_used.append({"name": "agent_memory", "detail": f"{len(memories)} hallazgos", "confidence": 0.65})
 
     if history:
-        history_lines = []
-        for msg in history[-8:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")[:300]
-            history_lines.append(f"**{role}:** {content}")
-        context_chunks.append("## Historial reciente\n" + "\n".join(history_lines))
-        sources_used.append({"name": "conversation_history", "detail": f"{len(history)} mensajes", "confidence": 0.70})
-
         # Detectar contexto activo: si los mensajes recientes mencionan un reporte/archivo
         _context_keywords = ["informe", "reporte", "archivo", "excel", "analisis de", "análisis de"]
         active_context_name = ""
@@ -391,6 +383,7 @@ async def generate_response(state: ChatState) -> dict:
     context = state.get("context", "Sin contexto previo.")
     personalized = state.get("personalized", "")
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
 
     # Cargar DNA para personalizar system prompt
     empresa_nombre = "la empresa"
@@ -436,10 +429,19 @@ async def generate_response(state: ChatState) -> dict:
     if personalized:
         system = personalized + "\n\n" + system
 
-    response = await model.ainvoke([
-        {"role": "system", "content": system},
-        {"role": "user", "content": message},
-    ])
+    # Construir mensajes con historial conversacional real
+    messages = [{"role": "system", "content": system}]
+
+    history = get_history(empresa_id, user_id) if (empresa_id and user_id) else []
+    for msg in history[-8:]:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": message})
+
+    response = await model.ainvoke(messages)
 
     return {
         "response": response.content,

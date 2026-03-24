@@ -45,15 +45,7 @@ def _clean_response_text(text: str) -> str:
     # Quita marcador BLUF visible para salida final.
     body = re.sub(r"(?im)^\s*bluf\s*:\s*", "", body)
 
-    # Limpia markdown comun para salida mas ejecutiva.
-    body = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", body)           # headers
-    body = re.sub(r"\*\*(.*?)\*\*", r"\1", body, flags=re.DOTALL)  # bold
-    body = re.sub(r"__(.*?)__", r"\1", body, flags=re.DOTALL)       # bold alt
-    body = re.sub(r"(?m)^\s*\*\s+", "- ", body)                     # bullets * -> -
-    body = re.sub(r"(?m)^\s*-\s{2,}", "- ", body)                   # normaliza sangria bullets
-    body = body.replace("*", "")                                     # quita asteriscos residuales
-
-    # Elimina trazabilidad embebida para dejar solo el bloque canonico final.
+    # Elimina trazabilidad embebida que el LLM a veces genera por su cuenta.
     body = re.sub(r"(?im)^\s*trazabilidad\s*:\s*$", "", body)
     body = re.sub(r"(?im)^\s*[-]?\s*fuente primaria\s*:\s*.*$", "", body)
     body = re.sub(r"(?im)^\s*[-]?\s*fuente secundaria\s*:\s*.*$", "", body)
@@ -71,17 +63,10 @@ def enforce_response_contract(response: str, sources_used: List[Dict], confidenc
 
     # Cierre condicional segun confianza.
     if confidence_text == "baja":
-        text += "\n\nNota: confianza baja. Se recomienda validar con una fuente adicional."
-
-    # Bloque de evidencia obligatorio.
-    evidence = (
-        "\n\n---\n"
-        f"Fuentes:\n- Primaria: {picks['primary']}\n- Secundaria: {picks['secondary']}\n"
-        f"Confianza: {round(confidence_value, 2)} ({confidence_text})"
-    )
+        text += "\n\n⚠️ Confianza baja — se recomienda validar con una fuente adicional."
 
     return {
-        "response": text + evidence,
+        "response": text,
         "traceability": {
             "primary_source": picks["primary"],
             "secondary_source": picks["secondary"],

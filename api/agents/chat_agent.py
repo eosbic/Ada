@@ -106,6 +106,13 @@ FORMATO (compatible con Telegram y Portal Web):
 - Usar Markdown estándar: negrita, cursiva, código — funciona en ambos canales
 - NO usar HTML. NO usar MarkdownV2 de Telegram. Markdown estándar es el formato universal.
 
+REGLA DE CONTEXTO CONVERSACIONAL:
+- Si el usuario viene hablando de un tema o informe especifico, TODAS las preguntas siguientes se refieren a ESE contexto hasta que el usuario cambie explicitamente de tema.
+- Si pregunta "mis vendedores" mientras hablan de un informe de ventas → vendedores DEL INFORME.
+- Si pregunta "alertas" mientras hablan de un informe → alertas DEL INFORME.
+- NUNCA mezcles datos de team_agent, email_agent o calendar_agent cuando la conversacion esta enfocada en un reporte especifico.
+- Si no estas seguro del contexto, pregunta: "¿Te refieres a los vendedores del informe o a los miembros de tu equipo en la plataforma?"
+
 NO HACER NUNCA:
 - "Como asistente de IA, no puedo..." — Ada no es un chatbot genérico
 - "Según la información disponible..." — si tienes datos, afirma
@@ -277,6 +284,25 @@ async def retrieve_context(state: ChatState) -> dict:
             history_lines.append(f"**{role}:** {content}")
         context_chunks.append("## Historial reciente\n" + "\n".join(history_lines))
         sources_used.append({"name": "conversation_history", "detail": f"{len(history)} mensajes", "confidence": 0.70})
+
+        # Detectar contexto activo: si los mensajes recientes mencionan un reporte/archivo
+        _context_keywords = ["informe", "reporte", "archivo", "excel", "analisis de", "análisis de"]
+        active_context_name = ""
+        for msg in reversed(history[-4:]):
+            msg_text = (msg.get("content", "") or "").lower()
+            for kw in _context_keywords:
+                idx = msg_text.find(kw)
+                if idx >= 0:
+                    # Extraer nombre que acompaña al keyword
+                    after = msg_text[idx + len(kw):].strip().strip(":").strip()
+                    name_part = after.split("\n")[0].split(".")[0].strip()[:60]
+                    if name_part and len(name_part) > 3:
+                        active_context_name = name_part
+                        break
+            if active_context_name:
+                break
+        if active_context_name:
+            context_chunks.insert(0, f"## CONTEXTO ACTIVO\nLa conversacion actual trata sobre: {active_context_name}. Prioriza datos de este reporte.")
 
     if reports_sql:
         context_chunks.append("## PostgreSQL reports\n" + "\n\n".join(reports_sql[:3]))

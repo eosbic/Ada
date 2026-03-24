@@ -100,6 +100,83 @@ def get_report_links(report_id: str, empresa_id: str) -> list:
     return traverse_report_graph([report_id], empresa_id, limit=20)
 
 
+REPORT_TYPE_LABELS = {
+    "excel_analysis": "Analisis Excel",
+    "email_summary": "Emails",
+    "calendar_event_summary": "Calendario",
+    "pm_task_summary": "Tareas de proyectos",
+    "notion_summary": "Documentos Notion",
+    "prospect_profile": "Prospectos",
+    "proactive_briefing": "Briefings",
+    "consolidated_analysis": "Consolidados",
+    "document_analysis": "Documentos",
+}
+
+
+def get_entity_360(entity_name: str, empresa_id: str, limit: int = 20) -> dict:
+    """Vista 360° de una entidad: busca en ada_reports por TODOS los report_types."""
+    if not entity_name or not empresa_id:
+        return {}
+
+    try:
+        with sync_engine.connect() as conn:
+            rows = conn.execute(
+                sql_text("""
+                    SELECT id, title, report_type, source_file, created_at,
+                           markdown_content, metrics_summary
+                    FROM ada_reports
+                    WHERE empresa_id = :eid
+                      AND is_archived = FALSE
+                      AND (title ILIKE :like OR markdown_content ILIKE :like)
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                """),
+                {"eid": empresa_id, "like": f"%{entity_name}%", "lim": limit},
+            ).fetchall()
+
+        if not rows:
+            return {"entity": entity_name, "total_mentions": 0, "by_source": {}, "source_types": []}
+
+        grouped = {}
+        for row in rows:
+            rtype = row.report_type or "unknown"
+            if rtype not in grouped:
+                grouped[rtype] = []
+            grouped[rtype].append({
+                "id": str(row.id),
+                "title": row.title,
+                "source_file": row.source_file,
+                "created_at": str(row.created_at) if row.created_at else "",
+                "snippet": (row.markdown_content or "")[:200],
+            })
+
+        return {
+            "entity": entity_name,
+            "total_mentions": len(rows),
+            "by_source": grouped,
+            "source_types": list(grouped.keys()),
+        }
+
+    except Exception as e:
+        print(f"GRAPH_NAV 360 error: {e}")
+        return {}
+
+
+def get_entity_360_text(entity_name: str, empresa_id: str) -> str:
+    """Version texto de 360° para inyectar en prompts."""
+    data = get_entity_360(entity_name, empresa_id)
+    if not data or data.get("total_mentions", 0) == 0:
+        return ""
+
+    lines = [f"### {entity_name} — {data['total_mentions']} menciones"]
+    for rtype, items in data.get("by_source", {}).items():
+        label = REPORT_TYPE_LABELS.get(rtype, rtype.replace("_", " ").title())
+        recent_titles = [it["title"] for it in items[:2]]
+        lines.append(f"- **{label}**: {len(items)} registros — {', '.join(recent_titles)}")
+
+    return "\n".join(lines)
+
+
 def search_with_graph(query: str, empresa_id: str, base_results: list) -> list:
     """
     Enriquece resultados de busqueda base con reportes conectados via grafo.

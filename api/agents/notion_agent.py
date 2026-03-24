@@ -48,6 +48,13 @@ ESTRATEGIA:
 - "lee la pagina de onboarding" → notion_read_page con page_id
 - "crea una pagina con..." → notion_create_page
 - "consulta la base de datos X" → notion_query_database con database_id
+- "tareas de [persona]" / "en qué participa [persona]" → notion_search con query que incluya el nombre de la persona
+- "eventos de [proyecto]" / "reuniones de [proyecto]" → notion_search con query del proyecto
+
+CONTEXTO CONVERSACIONAL:
+- Si el mensaje incluye un CONTEXTO CONVERSACIONAL RECIENTE, úsalo para resolver pronombres.
+- Si el usuario dice "El" o "Ella" o "esa persona", busca en el contexto reciente quién es.
+- Extrae el NOMBRE de la persona o proyecto del contexto para usarlo en la búsqueda.
 
 Si no tienes un ID especifico, usa notion_search primero.
 

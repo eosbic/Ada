@@ -286,8 +286,24 @@ async def run_agent(
         if plan_downgraded:
             budget_override = plan_model
 
+    # Enriquecer mensaje con contexto conversacional para agentes que no manejan historial
+    enriched_message = message
+    if empresa_id and user_id and routed_to in ("project_agent", "notion_agent", "calendar_agent", "generic_pm_agent"):
+        try:
+            from api.agents.chat_agent import get_history
+            history = get_history(empresa_id, user_id)
+            if history:
+                recent = history[-6:]
+                context_summary = "\n".join(
+                    f"{m.get('role','user')}: {m.get('content','')[:200]}"
+                    for m in recent
+                )
+                enriched_message = f"[CONTEXTO CONVERSACIONAL RECIENTE:\n{context_summary}\n]\n\nMENSAJE ACTUAL: {message}"
+        except Exception as e:
+            print(f"RUNNER: history enrichment error: {e}")
+
     agent_input = {
-        "message": message,
+        "message": enriched_message,
         "empresa_id": empresa_id or "",
         "user_id": user_id or "",
         "intent": intent,

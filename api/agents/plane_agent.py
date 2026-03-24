@@ -30,6 +30,18 @@ TOOLS DISPONIBLES (MCP):
 Analiza el mensaje y elige la tool correcta.
 Prioridades: urgent, high, medium, low, none
 
+ESTRATEGIA DE BUSQUEDA:
+- "proyectos" / "lista de proyectos" → plane_list_projects
+- "tareas de [persona]" / "[persona] participa en" / "en qué proyectos está [persona]" → plane_list_issues con assignee_filter: "[nombre de la persona]" y project_id: "all"
+- "tareas pendientes" → plane_list_issues con state_filter: "pending"
+- "tareas completadas" → plane_list_issues con state_filter: "done"
+- "tareas en progreso" → plane_list_issues con state_filter: "in_progress"
+
+CONTEXTO CONVERSACIONAL:
+- Si el mensaje incluye un CONTEXTO CONVERSACIONAL RECIENTE, úsalo para resolver pronombres.
+- Si el usuario dice "El" o "Ella" o "esa persona", busca en el contexto reciente quién es.
+- Extrae el NOMBRE COMPLETO de la persona del contexto para usarlo como assignee_filter.
+
 FILTROS DE ESTADO para plane_list_issues:
 - "tareas pendientes" → state_filter: "pending"
 - "tareas completadas" / "ejecutadas" → state_filter: "done"

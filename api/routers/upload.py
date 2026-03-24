@@ -2,7 +2,7 @@
 Upload Router - endpoint para subir archivos multimodales.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from typing import Optional
 
 from api.agents.excel_agent import excel_agent
@@ -41,6 +41,12 @@ async def upload_file(
 
     empresa_id = current_user["empresa_id"]
     user_id = current_user["user_id"]
+
+    # RBAC: verificar permiso can_upload_files
+    from api.services.rbac_service import get_user_permissions
+    rbac = get_user_permissions(empresa_id, user_id)
+    if not rbac["is_admin"] and not rbac["permissions"].get("can_upload_files", False):
+        raise HTTPException(status_code=403, detail="No tienes permiso para subir archivos. Contacta a tu administrador.")
 
     print(f"UPLOAD: {file_name} ({len(contents) // 1024}KB), ext={ext}")
 

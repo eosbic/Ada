@@ -8,12 +8,20 @@ y consolida toda la información en una respuesta unificada.
 
 import json
 import asyncio
+import unicodedata
 from typing import TypedDict, Optional, List, Dict
 from langgraph.graph import StateGraph, END
 from models.selector import selector
 from api.services.memory_service import search_memory, search_reports, search_reports_qdrant, search_vector_store1
 from api.services.graph_navigator import get_entity_360
 from api.agents.chat_agent import get_history
+
+
+def _normalize(text: str) -> str:
+    """Quita acentos y convierte a minúscula para comparación fuzzy."""
+    text = (text or "").lower()
+    nfkd = unicodedata.normalize('NFKD', text)
+    return ''.join(c for c in nfkd if not unicodedata.category(c).startswith('M'))
 
 
 class Entity360State(TypedDict, total=False):
@@ -70,15 +78,17 @@ DATOS RECOLECTADOS:
 {all_data}
 
 REGLAS:
-1. Organiza la información por secciones claras
+1. SIEMPRE empieza con el perfil de la persona/empresa: nombre completo, cargo, empresa, sector, web, LinkedIn, redes sociales. Si hay datos de prospecto en el RAG, MUÉSTRALOS TODOS.
 2. Usa emojis para categorizar: 👤 perfil, 🏢 empresa, 📋 tareas/proyectos, 📅 eventos, 📧 emails, 📊 reportes
-3. Si hay tareas en Plane o Notion, muéstralas con su estado y proyecto
-4. Si hay eventos en calendario, muestra los próximos
-5. Si hay emails, menciona los más recientes
-6. Conecta los puntos: si la persona tiene tareas pendientes Y una reunión próxima, menciónalo
-7. Al final, da un resumen ejecutivo de la relación con esta persona/empresa
-8. Si alguna fuente no tiene datos, simplemente no la menciones (no digas "no encontré nada en X")
-9. Sé directo — nada de "según mis datos" ni "basándome en la información disponible"
+3. Después del perfil, muestra TODAS las tareas de Plane agrupadas por proyecto con estado, prioridad, asignado y fecha
+4. Si hay páginas en Notion, muéstralas
+5. Si hay eventos en calendario, muestra los próximos
+6. Si hay emails, menciona los más recientes
+7. Conecta los puntos: si la persona tiene tareas pendientes Y una reunión próxima, menciónalo
+8. Al final, da un resumen ejecutivo de la relación con esta persona/empresa
+9. Si alguna fuente no tiene datos, simplemente no la menciones (no digas "no encontré nada en X")
+10. Sé directo — nada de "según mis datos" ni "basándome en la información disponible"
+11. MUESTRA TODO. No resumas ni omitas datos. Si hay 7 tareas, muestra las 7. Si hay LinkedIn, web y redes, muestra todo.
 
 Responde en formato Markdown con emojis y negritas."""
 
@@ -202,15 +212,16 @@ async def gather_all_sources(state: Entity360State) -> dict:
                     )
                     if isinstance(issues, list):
                         for issue in issues:
-                            name_lower = (issue.get("name", "") or "").lower()
-                            desc_lower = (issue.get("description", "") or "").lower()
-                            assignee_lower = (issue.get("assignee", "") or "").lower()
-                            entity_lower = entity_name.lower()
+                            name_norm = _normalize(issue.get("name", ""))
+                            desc_norm = _normalize(issue.get("description", ""))
+                            assignee_norm = _normalize(issue.get("assignee", ""))
 
-                            # Buscar cada palabra del nombre de la entidad
-                            entity_words = entity_lower.split()
+                            # Normalizar entidad y generar variantes de búsqueda
+                            entity_words = _normalize(entity_name).split()
+
+                            # Buscar en nombre, descripción y assignee (incluyendo usernames parciales)
                             matches = any(
-                                word in name_lower or word in desc_lower or word in assignee_lower
+                                word in name_norm or word in desc_norm or word in assignee_norm
                                 for word in entity_words if len(word) > 3
                             )
 

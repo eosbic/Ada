@@ -180,6 +180,26 @@ REGLAS:
 4. ⚠️ para riesgos, 💡 para oportunidades
 5. Si datos incompletos o sospechosos, dilo explícitamente
 6. Citar fuente: [Fuente: {state.get('file_name', 'archivo')}]
+
+SECCIONES OBLIGATORIAS — incluir TODAS si los datos las respaldan. No esperes a que te pregunten:
+
+⚠️ ALERTAS CRÍTICAS (lo que está mal y requiere acción HOY)
+- Márgenes negativos, cartera vencida, stock estancado, concentración peligrosa
+
+📊 RESUMEN EJECUTIVO (los 5 números más importantes)
+- Ventas totales, margen promedio, cartera total, días de mora promedio, inventario en meses
+
+🏆 TOP PERFORMERS (lo mejor)
+- Mejores vendedores, mejores productos, mejores ciudades
+
+🔴 BAJO RENDIMIENTO (lo peor)
+- Peores vendedores, productos con margen negativo, ciudades con baja penetración
+
+📈 OPORTUNIDADES (lo que se puede mejorar con acciones concretas)
+- Si los vendedores bajos suben X%, impacto en ventas de $Y
+- Si se reduce mora a N días, se liberan $Z en flujo de caja
+
+No omitas ninguna sección. El CEO necesita ver el panorama COMPLETO en la primera respuesta, no descubrirlo preguntando.
 """
     response = model.invoke([
         {"role": "system", "content": "Eres un analista de negocios senior con 15 años de experiencia. Respondes en español."},

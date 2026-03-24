@@ -6,6 +6,7 @@ import json
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from models.selector import selector
+from api.agents.chat_agent import get_history
 
 
 class RouterState(TypedDict, total=False):
@@ -71,9 +72,26 @@ async def classify_intent(state: RouterState) -> dict:
     if state.get("has_file"):
         file_ctx = f"[has_file=true, file_type={state.get('file_type', 'unknown')}] "
 
+    # Contexto conversacional para el router
+    conversation_hint = ""
+    empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
+    if empresa_id and user_id:
+        try:
+            history = get_history(empresa_id, user_id)
+            if history:
+                recent = history[-4:]
+                recent_text = "\n".join(
+                    f"{m.get('role','user')}: {m.get('content','')[:150]}"
+                    for m in recent
+                )
+                conversation_hint = f"\n[CONTEXTO: La conversación reciente trata sobre:\n{recent_text}\n]\nSi el usuario pide más detalles, alertas o profundizar sobre un tema ya en curso, clasifica como data_query, NO como data_consolidation."
+        except Exception as e:
+            print(f"ROUTER: history hint error: {e}")
+
     response = await model.ainvoke([
         {"role": "system", "content": ROUTER_PROMPT},
-        {"role": "user", "content": f"{file_ctx}{state.get('message', '')}"}
+        {"role": "user", "content": f"{file_ctx}{state.get('message', '')}{conversation_hint}"}
     ])
 
     try:

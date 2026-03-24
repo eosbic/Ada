@@ -54,9 +54,9 @@ def save_history(empresa_id: str, user_id: str, messages: list, max_turns: int =
             conn.execute(
                 sql_text("""
                     INSERT INTO conversation_history (empresa_id, user_id, messages, max_turns, updated_at)
-                    VALUES (:eid, :uid, :msgs::jsonb, :max_turns, NOW())
+                    VALUES (:eid, :uid, CAST(:msgs AS jsonb), :max_turns, NOW())
                     ON CONFLICT (empresa_id, user_id)
-                    DO UPDATE SET messages = :msgs::jsonb, updated_at = NOW()
+                    DO UPDATE SET messages = CAST(:msgs AS jsonb), updated_at = NOW()
                 """),
                 {"eid": empresa_id, "uid": user_id, "msgs": messages_json, "max_turns": max_turns}
             )
@@ -93,7 +93,7 @@ REGLAS DE COMPORTAMIENTO:
 3. CUESTIONA AL CEO. Si pregunta algo que los datos contradicen, dilo: "Entiendo tu percepción, pero los números dicen otra cosa: [dato]". Si propone algo riesgoso, dilo: "Eso tiene un problema: [razón]. Lo que yo haría es [alternativa]".
 4. PRIORIZA. Siempre clasifica: qué es urgente (actuar hoy), qué es importante (esta semana), qué puede esperar. No presentes todo al mismo nivel.
 5. CONECTA PUNTOS. Si la pregunta es sobre ventas pero hay una alerta de inventario relacionada, menciónala. Si hay un email de un cliente importante sin responder, dilo. Cruza fuentes.
-6. SÉ CONCISO. Respuestas cortas. Sin introducciones. Sin "espero que esto te sea útil". Si la respuesta es un número, da el número. Si necesita contexto, máximo 3 oraciones.
+6. ADAPTA LA PROFUNDIDAD A LO QUE PIDEN. Si preguntan un dato puntual, responde en 1 linea. Si piden un "resumen", da los 5-7 puntos clave con metricas. Si piden "informe completo" o "todas las alertas", despliega TODO: metricas, rankings, alertas por categoria, recomendaciones. Sin introducciones genericas. Sin "espero que esto te sea util".
 7. CUANDO NO SEPAS, DILO EN 1 ORACIÓN. "No tengo datos de marzo aún. ¿Quieres que te avise cuando se suba el reporte?" — y ya.
 8. MARCA TUS FUENTES. Si el dato viene de un reporte subido: afirma el dato directamente. Si es tu inferencia: "Estimo que [X] porque [razón]". Si cruzas fuentes: "Según el reporte de marzo + el email de Carlos: [conclusión]". Nunca mezcles hechos con inferencias sin marcar la diferencia.
 

@@ -83,14 +83,23 @@ async def cross_calendar(state: BriefingState) -> dict:
 
     try:
         from api.services.calendar_service import calendar_search_events
-        
+
         calendar_hits = []
+        all_events = []
         for entity in entities[:3]:
             events = calendar_search_events(entity, days_ahead=14, max_results=3, empresa_id=empresa_id)
+            all_events.extend(events)
             for e in events:
                 calendar_hits.append(
                     f"📅 {e['summary']} — {e['start'][:16].replace('T', ' ')}"
                 )
+
+        try:
+            from api.services.trail_service import leave_calendar_trail
+            if all_events:
+                leave_calendar_trail(empresa_id, all_events, search_context=", ".join(entities[:3]))
+        except Exception:
+            pass
 
         if calendar_hits:
             context = "REUNIONES RELACIONADAS:\n" + "\n".join(calendar_hits)
@@ -119,12 +128,21 @@ async def cross_email(state: BriefingState) -> dict:
         from api.services.gmail_service import gmail_search
 
         email_hits = []
+        all_emails = []
         for entity in entities[:3]:
             emails = gmail_search(entity, max_results=2, empresa_id=empresa_id)
+            all_emails.extend(emails)
             for e in emails:
                 email_hits.append(
                     f"📧 {e['subject']} — de {e['from']} ({e['date'][:16]})\n   {e['snippet'][:80]}"
                 )
+
+        try:
+            from api.services.trail_service import leave_email_trail
+            if all_emails:
+                leave_email_trail(empresa_id, all_emails, search_query=", ".join(entities[:3]))
+        except Exception:
+            pass
 
         if email_hits:
             context = "EMAILS RELACIONADOS:\n" + "\n".join(email_hits)
@@ -153,15 +171,24 @@ async def cross_notion(state: BriefingState) -> dict:
         from api.mcp_servers.mcp_host import mcp_host
 
         notion_hits = []
+        all_docs = []
         for entity in entities[:3]:
             result = await mcp_host.call_tool_by_name(
                 "notion_search", {"query": entity, "max_results": 2}, empresa_id
             )
             if isinstance(result, list):
+                all_docs.extend(result)
                 for r in result:
                     notion_hits.append(
                         f"📄 {r.get('title', 'Sin título')} ({r.get('type', '')}) — {r.get('last_edited', '')}"
                     )
+
+        try:
+            from api.services.trail_service import leave_notion_trail
+            if all_docs:
+                leave_notion_trail(empresa_id, all_docs, search_query=", ".join(entities[:3]))
+        except Exception:
+            pass
 
         if notion_hits:
             context = "DOCUMENTOS EN NOTION:\n" + "\n".join(notion_hits)

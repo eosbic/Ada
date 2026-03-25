@@ -95,18 +95,50 @@ async def classify_intent(state: RouterState) -> dict:
     conversation_hint = ""
     empresa_id = state.get("empresa_id", "")
     user_id = state.get("user_id", "")
+
+    history = []
     if empresa_id and user_id:
         try:
             history = get_history(empresa_id, user_id)
-            if history:
-                recent = history[-4:]
-                recent_text = "\n".join(
-                    f"{m.get('role','user')}: {m.get('content','')[:150]}"
-                    for m in recent
-                )
-                conversation_hint = f"\n[CONTEXTO: La conversación reciente trata sobre:\n{recent_text}\n]\nSi el usuario pide más detalles, alertas o profundizar sobre un tema ya en curso, clasifica como data_query, NO como data_consolidation."
         except Exception as e:
             print(f"ROUTER: history hint error: {e}")
+
+    # DETECCIÓN DETERMINÍSTICA: Si el mensaje tiene pronombres y el historial
+    # habla de una persona/entidad, forzar entity_360
+    msg_lower = (state.get("message", "") or "").lower().strip()
+    pronoun_markers = [
+        "de él", "de el", "de ella", "sobre él", "sobre el", "sobre ella",
+        "completa de él", "completa de el", "información de él", "informacion de el",
+        "todo sobre él", "todo sobre el", "todo de él", "todo de el",
+    ]
+
+    has_pronoun = any(p in msg_lower for p in pronoun_markers)
+
+    if has_pronoun and history:
+        # Verificar si en los últimos mensajes del usuario se mencionó una persona
+        import re as _re
+        for msg_entry in reversed(history[-6:]):
+            if msg_entry.get("role") != "user":
+                continue
+            content = msg_entry.get("content", "")
+            # Buscar nombres propios (2+ palabras con mayúscula)
+            name_match = _re.findall(r'\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)\b', content)
+            if name_match:
+                print(f"ROUTER: pronoun detected -> forcing entity_360 (last entity: '{name_match[-1]}')")
+                return {
+                    "intent": "entity_360",
+                    "confidence": 0.95,
+                    "routed_to": "entity_360_agent",
+                }
+
+    # Si hay historial, construir hint para el LLM
+    if history:
+        recent = history[-4:]
+        recent_text = "\n".join(
+            f"{m.get('role','user')}: {m.get('content','')[:150]}"
+            for m in recent
+        )
+        conversation_hint = f"\n[CONTEXTO: La conversación reciente trata sobre:\n{recent_text}\n]\nSi el usuario pide más detalles, alertas o profundizar sobre un tema ya en curso, clasifica como data_query, NO como data_consolidation."
 
     response = await model.ainvoke([
         {"role": "system", "content": ROUTER_PROMPT},

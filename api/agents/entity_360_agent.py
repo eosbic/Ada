@@ -14,7 +14,7 @@ from langgraph.graph import StateGraph, END
 from models.selector import selector
 from api.services.memory_service import search_memory, search_reports, search_reports_qdrant, search_vector_store1
 from api.services.graph_navigator import get_entity_360
-from api.agents.chat_agent import get_history
+from api.agents.chat_agent import get_history, save_history
 
 
 def _normalize(text: str) -> str:
@@ -423,13 +423,36 @@ async def consolidate_response(state: Entity360State) -> dict:
     }
 
 
+async def save_to_history(state: Entity360State) -> dict:
+    """Guarda el mensaje y respuesta en conversation_history."""
+    message = state.get("message", "")
+    response = state.get("response", "")
+    empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
+
+    if empresa_id and user_id and message:
+        try:
+            history = get_history(empresa_id, user_id)
+            if message:
+                history.append({"role": "user", "content": message})
+            if response:
+                history.append({"role": "assistant", "content": response[:2000]})
+            save_history(empresa_id, user_id, history)
+        except Exception as e:
+            print(f"ENTITY360: Error guardando historial: {e}")
+
+    return {}
+
+
 # Construir grafo
 graph = StateGraph(Entity360State)
 graph.add_node("detect_entity", detect_entity)
 graph.add_node("gather_sources", gather_all_sources)
 graph.add_node("consolidate", consolidate_response)
+graph.add_node("save", save_to_history)
 graph.set_entry_point("detect_entity")
 graph.add_edge("detect_entity", "gather_sources")
 graph.add_edge("gather_sources", "consolidate")
-graph.add_edge("consolidate", END)
+graph.add_edge("consolidate", "save")
+graph.add_edge("save", END)
 entity_360_agent = graph.compile()

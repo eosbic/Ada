@@ -76,26 +76,41 @@ Responde SOLO JSON:
 Sin markdown, sin explicación."""
 
 
-CONSOLIDATE_PROMPT = """Eres Ada, asesora ejecutiva. Tienes información de múltiples fuentes
-sobre {entity_name}. Tu trabajo es consolidar TODO en una respuesta completa y útil.
+CONSOLIDATE_PROMPT = """Eres Ada, asesora ejecutiva. Consolida TODA la información sobre {entity_name}.
 
-DATOS RECOLECTADOS:
+DATOS RECOLECTADOS DE MÚLTIPLES FUENTES:
 {all_data}
 
-REGLAS:
-1. SIEMPRE empieza con el perfil de la persona/empresa: nombre completo, cargo, empresa, sector, web, LinkedIn, redes sociales. Si hay datos de prospecto en el RAG, MUÉSTRALOS TODOS.
-2. Usa emojis para categorizar: 👤 perfil, 🏢 empresa, 📋 tareas/proyectos, 📅 eventos, 📧 emails, 📊 reportes
-3. Después del perfil, muestra TODAS las tareas de Plane agrupadas por proyecto con estado, prioridad, asignado y fecha
-4. Si hay páginas en Notion, muéstralas
-5. Si hay eventos en calendario, muestra los próximos
-6. Si hay emails, menciona los más recientes
-7. Conecta los puntos: si la persona tiene tareas pendientes Y una reunión próxima, menciónalo
-8. Al final, da un resumen ejecutivo de la relación con esta persona/empresa
-9. Si alguna fuente no tiene datos, simplemente no la menciones (no digas "no encontré nada en X")
-10. Sé directo — nada de "según mis datos" ni "basándome en la información disponible"
-11. MUESTRA TODO. No resumas ni omitas datos. Si hay 7 tareas, muestra las 7. Si hay LinkedIn, web y redes, muestra todo.
+FORMATO OBLIGATORIO — SIGUE ESTE ORDEN EXACTO:
 
-Responde en formato Markdown con emojis y negritas."""
+1. **PERFIL** (👤): SIEMPRE primero. Nombre completo, cargo, empresa, sector, web, LinkedIn,
+   redes sociales, email, teléfono. Si un dato existe en CUALQUIER fuente (RAG, reportes, etc),
+   EXTRÁELO y muéstralo. Si no existe, pon ⚠️ NO DISPONIBLE.
+
+2. **EMPRESA** (🏢): Si es persona, describe su empresa. Sector, tamaño, qué hacen,
+   propuesta de valor. Solo si hay datos.
+
+3. **TAREAS/PROYECTOS** (📋): TODAS las tareas de Plane agrupadas por proyecto.
+   Mostrar: nombre | estado | prioridad | asignado | fecha. No omitir ninguna.
+
+4. **NOTION** (📝): Páginas o databases que lo mencionan. Solo si hay datos.
+
+5. **CALENDARIO** (📅): Eventos/reuniones próximas. Solo si hay datos.
+
+6. **EMAILS** (📧): Correos recientes de/para esta persona. Solo si hay datos.
+
+7. **REPORTES** (📊): Reportes y documentos que lo mencionan. Solo si hay datos.
+
+8. **RESUMEN EJECUTIVO**: 3-4 líneas conectando los puntos más importantes.
+
+REGLAS:
+- EXTRAE datos de perfil del RAG aunque estén mezclados con otro texto. Si en el RAG
+  aparece "LinkedIn: https://..." o "CEO de Insights 4.0", MUÉSTRALO en la sección de perfil.
+- Si hay 7 tareas, muestra las 7. NUNCA resumas ni omitas.
+- Conecta puntos: si tiene tareas pendientes Y una reunión próxima, menciónalo.
+- No menciones fuentes que no tienen datos.
+- Sé directo — nada de "según mis datos".
+- Usa emojis y negritas para formato."""
 
 
 async def detect_entity(state: Entity360State) -> dict:
@@ -344,7 +359,7 @@ async def consolidate_response(state: Entity360State) -> dict:
 
     rag_context = state.get("rag_context", "")
     if rag_context:
-        all_data_parts.append(f"## INFORMACIÓN EN RAG (reportes, prospectos, documentos)\n{rag_context}")
+        all_data_parts.insert(0, f"## INFORMACIÓN DE PERFIL Y DOCUMENTOS (RAG)\n⚠️ IMPORTANTE: Extrae TODOS los datos de contacto, cargo, empresa, LinkedIn, web, redes sociales de este texto y muéstralos en la sección de PERFIL.\n\n{rag_context}")
 
     kg_data = state.get("kg_data", {})
     if kg_data and kg_data.get("total_mentions", 0) > 0:

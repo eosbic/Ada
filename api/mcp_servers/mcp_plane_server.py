@@ -65,30 +65,34 @@ async def plane_list_issues(
 
     issues = []
     for i in results:
-        state_detail = i.get("state_detail", {}) if isinstance(i.get("state_detail"), dict) else {}
-        state_name = state_detail.get("name", "")
-        state_group = state_detail.get("group", "")
+        # Extraer estado — con expand, 'state' es un dict
+        state_obj = i.get("state") or i.get("state_detail") or {}
+        state_name = ""
+        state_group = ""
+        if isinstance(state_obj, dict):
+            state_name = state_obj.get("name", "")
+            state_group = state_obj.get("group", "")
+        elif isinstance(state_obj, str):
+            state_name = state_obj  # fallback si es string (UUID sin expand)
 
-        # Extraer assignee - cubrir multiples formatos de la API de Plane
-        assignee_name = ""
-        # Formato 1: assignee_detail (objeto)
-        assignee_detail = i.get("assignee_detail") or {}
-        if isinstance(assignee_detail, dict) and assignee_detail:
-            assignee_name = assignee_detail.get("display_name", "") or assignee_detail.get("first_name", "")
-        # Formato 2: assignees_detail (lista de objetos)
-        if not assignee_name:
-            assignees_detail = i.get("assignees_detail") or i.get("assignees") or []
-            if isinstance(assignees_detail, list):
-                names = []
-                for a in assignees_detail:
-                    if isinstance(a, dict):
-                        n = a.get("display_name", "") or a.get("first_name", "")
-                        if n:
-                            names.append(n)
-                assignee_name = ", ".join(names)
-        # Formato 3: assignee como string directo
-        if not assignee_name and isinstance(i.get("assignee"), str) and i["assignee"]:
-            assignee_name = i["assignee"]
+        # Extraer assignees — con expand, 'assignees' es lista de dicts
+        assignee_names = []
+        assignees_list = i.get("assignees") or i.get("assignees_detail") or []
+        if isinstance(assignees_list, list):
+            for a in assignees_list:
+                if isinstance(a, dict):
+                    name = a.get("display_name", "") or f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
+                    if name:
+                        assignee_names.append(name)
+        # Fallback a assignee_detail (formato viejo)
+        if not assignee_names:
+            ad = i.get("assignee_detail") or {}
+            if isinstance(ad, dict) and ad:
+                name = ad.get("display_name", "") or ad.get("first_name", "")
+                if name:
+                    assignee_names.append(name)
+
+        assignee_name = ", ".join(assignee_names)
 
         issues.append({
             "id": i.get("id"), "name": i.get("name"),

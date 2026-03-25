@@ -79,7 +79,7 @@ def traverse_report_graph(
                 "title": row.title,
                 "source_file": row.source_file,
                 "link_type": row.link_type,
-                "snippet": (row.markdown_content or "")[:500],
+                "snippet": (row.markdown_content or "")[:1500],
                 "metrics": row.metrics_summary,
                 "tags": row.tags or [],
                 "created_at": str(row.created_at) if row.created_at else "",
@@ -147,7 +147,7 @@ def get_entity_360(entity_name: str, empresa_id: str, limit: int = 20) -> dict:
                 "title": row.title,
                 "source_file": row.source_file,
                 "created_at": str(row.created_at) if row.created_at else "",
-                "snippet": (row.markdown_content or "")[:200],
+                "snippet": (row.markdown_content or "")[:1500],
             })
 
         return {

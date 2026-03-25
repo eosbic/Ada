@@ -363,11 +363,16 @@ async def consolidate_response(state: Entity360State) -> dict:
 
     kg_data = state.get("kg_data", {})
     if kg_data and kg_data.get("total_mentions", 0) > 0:
-        kg_lines = [f"Menciones totales: {kg_data['total_mentions']}"]
+        kg_lines = []
         for rtype, items in kg_data.get("by_source", {}).items():
-            titles = [it["title"] for it in items[:3]]
-            kg_lines.append(f"- {rtype}: {', '.join(titles)}")
-        all_data_parts.append(f"## KNOWLEDGE GRAPH\n" + "\n".join(kg_lines))
+            kg_lines.append(f"\n### {rtype}")
+            for it in items[:3]:
+                kg_lines.append(f"**{it['title']}**")
+                snippet = it.get("snippet", "")
+                if snippet:
+                    kg_lines.append(snippet)
+                kg_lines.append("")
+        all_data_parts.insert(0, f"## DATOS DE PERFIL Y REPORTES (Knowledge Graph)\n⚠️ EXTRAE todos los datos de contacto, cargo, empresa, LinkedIn, web de este texto.\n" + "\n".join(kg_lines))
 
     plane_data = state.get("plane_data", [])
     if plane_data:

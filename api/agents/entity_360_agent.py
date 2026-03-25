@@ -412,6 +412,12 @@ async def consolidate_response(state: Entity360State) -> dict:
         all_data=all_data,
     )
 
+    # Si el usuario pide info completa, reforzar que muestre TODO
+    msg_lower = (state.get("message", "") or "").lower()
+    completeness_keywords = ["completa", "completo", "todo sobre", "toda la", "todo de", "todo lo que"]
+    if any(kw in msg_lower for kw in completeness_keywords):
+        prompt += "\n\nIMPORTANTE: El usuario pidió información COMPLETA. Muestra ABSOLUTAMENTE TODO lo que tengas. No resumas, no omitas, no acortes. Si la primera vez mostraste 7 tareas, ahora muestra las mismas 7. Si hay perfil, empresa, tareas, emails, reportes — muestra TODO otra vez con el mismo nivel de detalle o más."
+
     response = await model.ainvoke([
         {"role": "system", "content": prompt},
         {"role": "user", "content": state.get("message", "")},

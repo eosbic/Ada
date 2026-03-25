@@ -85,6 +85,21 @@ INTENT_AGENT_MAP = {
 
 
 async def classify_intent(state: RouterState) -> dict:
+    # WHITELIST: saludos siempre van a conversational
+    msg_lower = (state.get("message", "") or "").lower().strip()
+    greeting_patterns = [
+        "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+        "buen dia", "buen día", "como estas", "cómo estás", "que tal", "qué tal",
+        "hey", "hi", "hello", "good morning", "saludos",
+    ]
+    if msg_lower in greeting_patterns or any(msg_lower == p for p in greeting_patterns):
+        print(f"ROUTER: greeting detected -> conversational")
+        return {
+            "intent": "conversational",
+            "confidence": 1.0,
+            "routed_to": "chat_agent",
+        }
+
     model, _ = selector.get_model("routing")
 
     file_ctx = ""

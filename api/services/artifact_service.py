@@ -1,5 +1,7 @@
 """
-Artifact Service — Genera PDFs profesionales con graficos, metricas y alertas.
+Artifact Service — PDFs profesionales estilo propuesta empresarial.
+Fondo blanco, tipografia Helvetica, metricas en cards grises, alertas con
+borde lateral de color, graficos light, footer discreto.
 """
 
 import json
@@ -13,46 +15,56 @@ from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, mm
+from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor, white, black
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle,
-    KeepTogether, HRFlowable, PageBreak,
+    HRFlowable,
 )
-from reportlab.platypus.flowables import Flowable
 
 
 ARTIFACTS_DIR = Path("generated_artifacts")
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Colors
-C_BG = HexColor("#0c1220")
-C_CARD = HexColor("#101828")
-C_ACCENT = HexColor("#00e5ff")
-C_TEXT = HexColor("#e0f4ff")
-C_TEXT2 = HexColor("#7eafc9")
-C_BORDER = HexColor("#1a2840")
-C_GREEN = HexColor("#00ff9d")
-C_RED = HexColor("#ff3d5a")
-C_YELLOW = HexColor("#ffd60a")
-C_ORANGE = HexColor("#ff6b35")
+# ── Paleta corporativa ──────────────────────────────────────
+C_BLACK = HexColor("#1a1a1a")
+C_DARK = HexColor("#333333")
+C_GRAY = HexColor("#666666")
+C_GRAY_LIGHT = HexColor("#999999")
+C_BORDER = HexColor("#d0d0cc")
+C_CARD_BG = HexColor("#f5f5f0")
 C_WHITE = white
+C_ACCENT = HexColor("#2563eb")  # azul sobrio para enlaces / tipo de reporte
+
+C_ALERT_CRITICAL_BORDER = HexColor("#dc2626")
+C_ALERT_CRITICAL_BG = HexColor("#fef2f2")
+C_ALERT_CRITICAL_TEXT = HexColor("#7f1d1d")
+
+C_ALERT_WARNING_BORDER = HexColor("#d97706")
+C_ALERT_WARNING_BG = HexColor("#fffbeb")
+C_ALERT_WARNING_TEXT = HexColor("#78350f")
+
+C_ALERT_INFO_BORDER = HexColor("#2563eb")
+C_ALERT_INFO_BG = HexColor("#eff6ff")
+C_ALERT_INFO_TEXT = HexColor("#1e3a5f")
 
 ALERT_COLORS = {
-    "critical": {"bg": HexColor("#2a1215"), "border": C_RED, "text": HexColor("#F09595"), "label": "CRITICO"},
-    "warning": {"bg": HexColor("#2a2008"), "border": C_ORANGE, "text": HexColor("#FAC775"), "label": "ALERTA"},
-    "info": {"bg": HexColor("#0c1a2e"), "border": C_ACCENT, "text": HexColor("#85B7EB"), "label": "INFO"},
+    "critical": {"bg": C_ALERT_CRITICAL_BG, "border": C_ALERT_CRITICAL_BORDER, "text": C_ALERT_CRITICAL_TEXT, "label": "CRITICO"},
+    "warning":  {"bg": C_ALERT_WARNING_BG,  "border": C_ALERT_WARNING_BORDER,  "text": C_ALERT_WARNING_TEXT,  "label": "ALERTA"},
+    "info":     {"bg": C_ALERT_INFO_BG,     "border": C_ALERT_INFO_BORDER,     "text": C_ALERT_INFO_TEXT,     "label": "INFO"},
 }
 
 TYPE_LABELS = {
-    "excel_analysis": "Analisis de datos",
-    "consolidated_analysis": "Analisis consolidado",
-    "proactive_briefing": "Briefing ejecutivo",
-    "document_analysis": "Analisis de documento",
-    "image_analysis": "Analisis de imagen",
+    "excel_analysis": "Analisis de Datos",
+    "consolidated_analysis": "Analisis Consolidado",
+    "proactive_briefing": "Briefing Ejecutivo",
+    "document_analysis": "Analisis de Documento",
+    "image_analysis": "Analisis de Imagen",
 }
 
+
+# ── Utilidades ──────────────────────────────────────────────
 
 def wants_pdf(message: str) -> bool:
     """Detecta si el usuario quiere un PDF."""
@@ -61,58 +73,13 @@ def wants_pdf(message: str) -> bool:
     return any(k in msg for k in ["pdf", "en pdf", "genera pdf", "exporta pdf", "informe pdf"])
 
 
-def _get_styles():
-    """Crea estilos personalizados para el PDF."""
-    base = getSampleStyleSheet()
-
-    styles = {
-        "title": ParagraphStyle("PDFTitle", parent=base["Heading1"],
-            fontSize=20, textColor=C_TEXT, spaceAfter=4, leading=24),
-        "subtitle": ParagraphStyle("PDFSubtitle", parent=base["Normal"],
-            fontSize=9, textColor=C_TEXT2, spaceAfter=12),
-        "h2": ParagraphStyle("PDFH2", parent=base["Heading2"],
-            fontSize=14, textColor=C_ACCENT, spaceBefore=16, spaceAfter=8, leading=18),
-        "h3": ParagraphStyle("PDFH3", parent=base["Heading3"],
-            fontSize=11, textColor=C_TEXT, spaceBefore=10, spaceAfter=6, leading=14),
-        "body": ParagraphStyle("PDFBody", parent=base["Normal"],
-            fontSize=9, textColor=C_TEXT, leading=14, spaceAfter=6),
-        "body_small": ParagraphStyle("PDFBodySmall", parent=base["Normal"],
-            fontSize=8, textColor=C_TEXT2, leading=12, spaceAfter=4),
-        "metric_value": ParagraphStyle("MetricValue", parent=base["Normal"],
-            fontSize=16, textColor=C_ACCENT, alignment=TA_CENTER, leading=20),
-        "metric_label": ParagraphStyle("MetricLabel", parent=base["Normal"],
-            fontSize=7, textColor=C_TEXT2, alignment=TA_CENTER, leading=10),
-        "alert_label": ParagraphStyle("AlertLabel", parent=base["Normal"],
-            fontSize=7, textColor=C_RED, leading=10),
-        "alert_text": ParagraphStyle("AlertText", parent=base["Normal"],
-            fontSize=8, textColor=C_TEXT, leading=12),
-        "footer": ParagraphStyle("PDFFooter", parent=base["Normal"],
-            fontSize=7, textColor=C_TEXT2, alignment=TA_CENTER),
-    }
-    return styles
-
-
-class RoundedRect(Flowable):
-    """Fondo redondeado para secciones."""
-    def __init__(self, width, height, color=C_CARD, radius=6):
-        Flowable.__init__(self)
-        self.width = width
-        self.height = height
-        self.color = color
-        self.radius = radius
-
-    def draw(self):
-        self.canv.setFillColor(self.color)
-        self.canv.roundRect(0, 0, self.width, self.height, self.radius, fill=1, stroke=0)
-
-
 def _format_metric_val(key: str, value, currency: str = "COP") -> str:
     """Formatea valor de metrica usando locale_formatter."""
     from api.services.locale_formatter import format_currency, format_number
     if not isinstance(value, (int, float)):
         return str(value)
-    money_keywords = ("total", "venta", "ingreso", "costo", "gasto", "precio", "valor", "factur", "revenue", "cost")
-    if any(k in key.lower() for k in money_keywords):
+    money_kw = ("total", "venta", "ingreso", "costo", "gasto", "precio", "valor", "factur", "revenue", "cost")
+    if any(k in key.lower() for k in money_kw):
         return format_currency(value, currency)
     if "promedio" in key.lower() or "margen" in key.lower():
         return format_number(value, currency)
@@ -125,224 +92,247 @@ def _format_metric_label(key: str) -> str:
     return key.replace("_", " ").strip().capitalize()
 
 
-def _clean_markdown(text: str) -> str:
-    """Limpia markdown para uso en ReportLab."""
-    clean = (text or "").strip()
-    clean = re.sub(r"\n{3,}", "\n\n", clean)
-    return clean
+# ── Estilos ─────────────────────────────────────────────────
+
+def _get_styles() -> dict:
+    """Estilos Helvetica, jerarquia clara, fondo blanco."""
+    base = getSampleStyleSheet()
+    return {
+        "title": ParagraphStyle("PDFTitle", parent=base["Heading1"],
+            fontName="Helvetica-Bold", fontSize=18, textColor=C_BLACK,
+            spaceAfter=2, leading=22),
+        "subtitle": ParagraphStyle("PDFSubtitle", parent=base["Normal"],
+            fontName="Helvetica", fontSize=9, textColor=C_GRAY_LIGHT,
+            spaceAfter=10, leading=12),
+        "type_badge": ParagraphStyle("TypeBadge", parent=base["Normal"],
+            fontName="Helvetica-Bold", fontSize=8, textColor=C_ACCENT,
+            spaceAfter=6, leading=10),
+        "h2": ParagraphStyle("PDFH2", parent=base["Heading2"],
+            fontName="Helvetica-Bold", fontSize=14, textColor=C_BLACK,
+            spaceBefore=18, spaceAfter=8, leading=17),
+        "h3": ParagraphStyle("PDFH3", parent=base["Heading3"],
+            fontName="Helvetica-Bold", fontSize=11, textColor=C_DARK,
+            spaceBefore=12, spaceAfter=6, leading=14),
+        "body": ParagraphStyle("PDFBody", parent=base["Normal"],
+            fontName="Helvetica", fontSize=10, textColor=C_DARK,
+            leading=15, spaceAfter=6),
+        "body_small": ParagraphStyle("PDFSmall", parent=base["Normal"],
+            fontName="Helvetica", fontSize=8, textColor=C_GRAY,
+            leading=11, spaceAfter=3),
+        "metric_value": ParagraphStyle("MetricVal", parent=base["Normal"],
+            fontName="Helvetica-Bold", fontSize=16, textColor=C_BLACK,
+            alignment=TA_CENTER, leading=20),
+        "metric_label": ParagraphStyle("MetricLbl", parent=base["Normal"],
+            fontName="Helvetica", fontSize=7, textColor=C_GRAY,
+            alignment=TA_CENTER, leading=10, spaceAfter=0),
+    }
 
 
-def _md_to_paragraphs(text: str, styles: dict) -> list:
-    """Convierte markdown a lista de flowables de ReportLab."""
-    flowables = []
-    lines = _clean_markdown(text).split("\n")
-    buffer = []
+# ── Secciones del PDF ──────────────────────────────────────
 
-    def flush_buffer():
-        if buffer:
-            block = " ".join(buffer)
-            block = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", block)
-            block = re.sub(r"\*(.+?)\*", r"<i>\1</i>", block)
-            block = escape(block).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
-            block = block.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
-            flowables.append(Paragraph(block, styles["body"]))
-            buffer.clear()
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            flush_buffer()
-            flowables.append(Spacer(1, 4))
-            continue
-        if stripped.startswith("### "):
-            flush_buffer()
-            flowables.append(Paragraph(escape(stripped[4:]), styles["h3"]))
-        elif stripped.startswith("## "):
-            flush_buffer()
-            flowables.append(Paragraph(escape(stripped[3:]), styles["h2"]))
-        elif stripped.startswith("# "):
-            flush_buffer()
-            flowables.append(Paragraph(escape(stripped[2:]), styles["h2"]))
-        elif stripped.startswith("- ") or stripped.startswith("* "):
-            flush_buffer()
-            bullet_text = stripped[2:]
-            bullet_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", bullet_text)
-            bullet_text = escape(bullet_text).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
-            flowables.append(Paragraph(f"\u2022 {bullet_text}", styles["body"]))
-        elif re.match(r"^\d+\.\s", stripped):
-            flush_buffer()
-            flowables.append(Paragraph(escape(stripped), styles["body"]))
-        else:
-            buffer.append(stripped)
-
-    flush_buffer()
-    return flowables
-
-
-def _build_header(title: str, report_type: str, created_at, generated_by: str,
-                  source_file: str, styles: dict) -> list:
-    """Construye header del PDF."""
-    flowables = []
+def _build_header(title: str, report_type: str, created_at,
+                  generated_by: str, source_file: str, styles: dict) -> list:
+    """Header: badge de tipo, titulo grande, metadata, linea divisora."""
+    f = []
     type_label = TYPE_LABELS.get(report_type, report_type.replace("_", " ").title())
-    flowables.append(Paragraph(f"<font color='#00e5ff' size='8'>{escape(type_label.upper())}</font>", styles["body_small"]))
-    flowables.append(Spacer(1, 4))
-    flowables.append(Paragraph(escape(title), styles["title"]))
+    f.append(Paragraph(escape(type_label.upper()), styles["type_badge"]))
+    f.append(Paragraph(escape(title), styles["title"]))
 
-    meta_parts = []
+    meta = []
     if created_at:
         from api.services.locale_formatter import format_date
-        meta_parts.append(format_date(created_at, long_format=True))
+        meta.append(format_date(created_at, long_format=True))
     if generated_by:
-        meta_parts.append(f"Modelo: {generated_by}")
+        meta.append(f"Modelo: {generated_by}")
     if source_file:
-        meta_parts.append(f"Fuente: {source_file}")
-    if meta_parts:
-        flowables.append(Paragraph(escape(" \u2022 ".join(meta_parts)), styles["subtitle"]))
+        meta.append(f"Fuente: {source_file}")
+    if meta:
+        f.append(Paragraph(escape("  \u2022  ".join(meta)), styles["subtitle"]))
 
-    flowables.append(HRFlowable(width="100%", thickness=1, color=C_BORDER, spaceAfter=12))
-    return flowables
+    f.append(HRFlowable(width="100%", thickness=0.75, color=C_BORDER, spaceAfter=14))
+    return f
 
 
-def _build_metrics_section(metrics: dict, currency: str, styles: dict) -> list:
-    """Construye seccion de metricas como cards."""
+def _build_metrics(metrics: dict, currency: str, styles: dict) -> list:
+    """Metricas en cards con fondo gris claro, bordes sutiles."""
     if not metrics:
         return []
-
-    numeric = {k: v for k, v in metrics.items() if isinstance(v, (int, float)) and not k.startswith("_")}
+    numeric = {k: v for k, v in metrics.items()
+               if isinstance(v, (int, float)) and not k.startswith("_")}
     if not numeric:
         return []
 
     items = list(numeric.items())[:8]
-    flowables = [Paragraph("METRICAS CLAVE", styles["h2"])]
+    f = [Paragraph("Metricas clave", styles["h2"])]
 
-    # Build metric cards as a table (2-4 per row)
     cols = min(4, len(items))
     rows_data = []
-    current_row = []
-
+    row = []
     for key, value in items:
-        cell_content = [
+        cell = [
             Paragraph(_format_metric_val(key, value, currency), styles["metric_value"]),
+            Spacer(1, 2),
             Paragraph(escape(_format_metric_label(key)), styles["metric_label"]),
         ]
-        current_row.append(cell_content)
-        if len(current_row) >= cols:
-            rows_data.append(current_row)
-            current_row = []
-
-    if current_row:
-        while len(current_row) < cols:
-            current_row.append([""])
-        rows_data.append(current_row)
+        row.append(cell)
+        if len(row) >= cols:
+            rows_data.append(row)
+            row = []
+    if row:
+        while len(row) < cols:
+            row.append([""])
+        rows_data.append(row)
 
     if rows_data:
-        col_width = 6.5 * inch / cols
-        table = Table(rows_data, colWidths=[col_width] * cols)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), C_CARD),
+        cw = 6.5 * inch / cols
+        t = Table(rows_data, colWidths=[cw] * cols)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), C_CARD_BG),
             ("BOX", (0, 0), (-1, -1), 0.5, C_BORDER),
             ("INNERGRID", (0, 0), (-1, -1), 0.5, C_BORDER),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 10),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ]))
-        flowables.append(table)
-        flowables.append(Spacer(1, 12))
+        f.append(t)
+        f.append(Spacer(1, 14))
+    return f
 
-    return flowables
 
-
-def _build_alerts_section(alerts: list, styles: dict) -> list:
-    """Construye seccion de alertas con colores por severidad."""
+def _build_alerts(alerts: list, styles: dict) -> list:
+    """Alertas: fondo casi blanco, borde izquierdo de color, texto oscuro."""
     if not alerts:
         return []
 
-    flowables = [Paragraph("ALERTAS Y SENALES", styles["h2"])]
+    f = [Paragraph("Alertas y senales", styles["h2"])]
     order = {"critical": 0, "warning": 1, "info": 2}
-    sorted_alerts = sorted(alerts, key=lambda a: order.get(a.get("level", "info"), 9))
+    sorted_a = sorted(alerts, key=lambda a: order.get(a.get("level", "info"), 9))
 
-    for alert in sorted_alerts[:15]:
+    for alert in sorted_a[:15]:
         level = alert.get("level", "info")
         message = alert.get("message", "")
-        colors = ALERT_COLORS.get(level, ALERT_COLORS["info"])
+        ac = ALERT_COLORS.get(level, ALERT_COLORS["info"])
 
-        label_style = ParagraphStyle("al", fontSize=7, textColor=colors["border"],
-                                     fontName="Helvetica-Bold", leading=10)
-        text_style = ParagraphStyle("at", fontSize=8, textColor=colors["text"], leading=12)
+        label_s = ParagraphStyle("_al", fontName="Helvetica-Bold", fontSize=7,
+                                 textColor=ac["border"], leading=10)
+        text_s = ParagraphStyle("_at", fontName="Helvetica", fontSize=9,
+                                textColor=ac["text"], leading=13)
 
-        row = [[
-            Paragraph(colors["label"], label_style),
-            Paragraph(escape(message), text_style),
-        ]]
-        t = Table(row, colWidths=[60, 6.5 * inch - 70])
+        row = [[Paragraph(ac["label"], label_s), Paragraph(escape(message), text_s)]]
+        t = Table(row, colWidths=[55, 6.5 * inch - 65])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors["bg"]),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("BACKGROUND", (0, 0), (-1, -1), ac["bg"]),
+            ("LINEBEFOREE", (0, 0), (0, -1), 3, ac["border"]),  # left border
+            ("LEFTPADDING", (0, 0), (0, 0), 10),
+            ("LEFTPADDING", (1, 0), (1, 0), 8),
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
-        flowables.append(t)
-        flowables.append(Spacer(1, 4))
+        f.append(t)
+        f.append(Spacer(1, 5))
 
-    flowables.append(Spacer(1, 8))
-    return flowables
+    f.append(Spacer(1, 8))
+    return f
 
 
-def _build_charts_section(metrics: dict, markdown: str, styles: dict) -> tuple[list, list[str]]:
-    """Genera e incrusta graficos. Retorna (flowables, chart_paths para cleanup)."""
-    flowables = []
-    chart_paths = []
-
+def _build_charts(metrics: dict, markdown: str, styles: dict) -> tuple[list, list[str]]:
+    """Genera graficos en modo claro e incrusta. Retorna (flowables, paths)."""
+    f = []
+    paths = []
     try:
         from api.services.chart_generator import generate_charts_from_metrics
-        paths = generate_charts_from_metrics(metrics, markdown)
-        if paths:
-            flowables.append(Paragraph("VISUALIZACION", styles["h2"]))
-            for path in paths:
-                if os.path.exists(path):
-                    chart_paths.append(path)
-                    img = Image(path, width=6.2 * inch, height=3.2 * inch)
-                    flowables.append(img)
-                    flowables.append(Spacer(1, 10))
+        chart_paths = generate_charts_from_metrics(metrics, markdown, light_mode=True)
+        if chart_paths:
+            f.append(Paragraph("Visualizacion", styles["h2"]))
+            for p in chart_paths:
+                if os.path.exists(p):
+                    paths.append(p)
+                    img = Image(p, width=6.2 * inch, height=3.2 * inch)
+                    f.append(img)
+                    f.append(Spacer(1, 12))
     except Exception as e:
         print(f"PDF: Error generando graficos: {e}")
+    return f, paths
 
-    return flowables, chart_paths
+
+def _build_content(markdown: str, styles: dict) -> list:
+    """Convierte markdown a flowables de ReportLab."""
+    if not markdown:
+        return []
+    f = [Paragraph("Analisis detallado", styles["h2"])]
+    lines = re.sub(r"\n{3,}", "\n\n", (markdown or "").strip()).split("\n")
+    buf = []
+
+    def flush():
+        if buf:
+            block = " ".join(buf)
+            block = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", block)
+            block = re.sub(r"\*(.+?)\*", r"<i>\1</i>", block)
+            block = escape(block).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+            block = block.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+            f.append(Paragraph(block, styles["body"]))
+            buf.clear()
+
+    for line in lines:
+        s = line.strip()
+        if not s:
+            flush()
+            f.append(Spacer(1, 4))
+        elif s.startswith("### "):
+            flush(); f.append(Paragraph(escape(s[4:]), styles["h3"]))
+        elif s.startswith("## "):
+            flush(); f.append(Paragraph(escape(s[3:]), styles["h2"]))
+        elif s.startswith("# "):
+            flush(); f.append(Paragraph(escape(s[2:]), styles["h2"]))
+        elif s.startswith("- ") or s.startswith("* "):
+            flush()
+            bt = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s[2:])
+            bt = escape(bt).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+            f.append(Paragraph(f"\u2022  {bt}", styles["body"]))
+        elif re.match(r"^\d+\.\s", s):
+            flush(); f.append(Paragraph(escape(s), styles["body"]))
+        else:
+            buf.append(s)
+    flush()
+    return f
 
 
-def _build_footer_func(title: str):
-    """Retorna funcion para dibujar footer en cada pagina."""
-    def _footer(canvas, doc):
-        canvas.saveState()
-        canvas.setFillColor(C_BORDER)
-        canvas.rect(0, 0, LETTER[0], 30, fill=1, stroke=0)
-        canvas.setFillColor(C_TEXT2)
-        canvas.setFont("Helvetica", 7)
-        canvas.drawString(doc.leftMargin, 12,
-                          f"Generado por ADA V5.0 \u2014 {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}")
-        canvas.drawRightString(LETTER[0] - doc.rightMargin, 12,
-                               f"Pag. {canvas.getPageNumber()}")
-        canvas.restoreState()
-    return _footer
+def _page_footer(canvas, doc):
+    """Footer discreto: ADA V5.0 en gris + numero de pagina."""
+    canvas.saveState()
+    # Linea fina superior
+    canvas.setStrokeColor(HexColor("#d0d0cc"))
+    canvas.setLineWidth(0.5)
+    y = 35
+    canvas.line(doc.leftMargin, y, LETTER[0] - doc.rightMargin, y)
+    # Texto
+    canvas.setFillColor(HexColor("#999999"))
+    canvas.setFont("Helvetica", 7)
+    canvas.drawString(doc.leftMargin, 22,
+                      f"Generado por ADA V5.0  \u2014  {datetime.utcnow().strftime('%d/%m/%Y %H:%M UTC')}")
+    canvas.drawRightString(LETTER[0] - doc.rightMargin, 22,
+                           f"Pagina {canvas.getPageNumber()}")
+    canvas.restoreState()
 
+
+# ── Funcion principal ───────────────────────────────────────
 
 def generate_professional_pdf(report_data: dict) -> dict:
     """
-    Genera un PDF profesional desde datos de reporte.
+    Genera PDF profesional estilo propuesta de consultoria.
 
     Args:
-        report_data: dict con keys: title, report_type, metrics_summary,
-                     alerts, markdown_content, created_at, generated_by,
-                     source_file, empresa_id (opcional, para locale)
-
+        report_data: title, report_type, metrics_summary, alerts,
+                     markdown_content, created_at, generated_by,
+                     source_file, empresa_id (para locale)
     Returns:
         dict con ok, file_path, file_name, mime_type
     """
-    title = report_data.get("title", "Reporte Ada")
+    title = report_data.get("title", "Reporte")
     report_type = report_data.get("report_type", "general")
     markdown = report_data.get("markdown_content", "")
     created_at = report_data.get("created_at")
@@ -352,19 +342,14 @@ def generate_professional_pdf(report_data: dict) -> dict:
 
     metrics = report_data.get("metrics_summary", {})
     if isinstance(metrics, str):
-        try:
-            metrics = json.loads(metrics)
-        except Exception:
-            metrics = {}
+        try: metrics = json.loads(metrics)
+        except Exception: metrics = {}
 
     alerts = report_data.get("alerts", [])
     if isinstance(alerts, str):
-        try:
-            alerts = json.loads(alerts)
-        except Exception:
-            alerts = []
+        try: alerts = json.loads(alerts)
+        except Exception: alerts = []
 
-    # Locale
     currency = "COP"
     if empresa_id:
         try:
@@ -374,46 +359,29 @@ def generate_professional_pdf(report_data: dict) -> dict:
             pass
 
     styles = _get_styles()
-
     safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "_", title)[:45] or "reporte"
     filename = f"{safe_title}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.pdf"
     file_path = ARTIFACTS_DIR / filename
-
     chart_paths = []
 
     try:
         doc = SimpleDocTemplate(
-            str(file_path),
-            pagesize=LETTER,
-            leftMargin=0.75 * inch,
-            rightMargin=0.75 * inch,
-            topMargin=0.6 * inch,
-            bottomMargin=0.6 * inch,
+            str(file_path), pagesize=LETTER,
+            leftMargin=0.85 * inch, rightMargin=0.85 * inch,
+            topMargin=0.65 * inch, bottomMargin=0.65 * inch,
         )
 
         story = []
-
-        # Header
         story.extend(_build_header(title, report_type, created_at, generated_by, source_file, styles))
+        story.extend(_build_metrics(metrics, currency, styles))
 
-        # Metrics
-        story.extend(_build_metrics_section(metrics, currency, styles))
+        chart_f, chart_paths = _build_charts(metrics, markdown, styles)
+        story.extend(chart_f)
 
-        # Charts
-        chart_flowables, chart_paths = _build_charts_section(metrics, markdown, styles)
-        story.extend(chart_flowables)
+        story.extend(_build_alerts(alerts, styles))
+        story.extend(_build_content(markdown, styles))
 
-        # Alerts
-        story.extend(_build_alerts_section(alerts, styles))
-
-        # Content
-        if markdown:
-            story.append(Paragraph("ANALISIS DETALLADO", styles["h2"]))
-            story.extend(_md_to_paragraphs(markdown, styles))
-
-        # Build
-        footer_func = _build_footer_func(title)
-        doc.build(story, onFirstPage=footer_func, onLaterPages=footer_func)
+        doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
 
         return {
             "ok": True,
@@ -421,16 +389,10 @@ def generate_professional_pdf(report_data: dict) -> dict:
             "file_name": filename,
             "mime_type": "application/pdf",
         }
-
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "ok": False,
-            "error": f"Error generando PDF: {e}",
-        }
+        import traceback; traceback.print_exc()
+        return {"ok": False, "error": f"Error generando PDF: {e}"}
     finally:
-        # Cleanup chart temp files
         from api.services.chart_generator import cleanup_charts
         cleanup_charts(chart_paths)
 

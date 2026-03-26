@@ -105,14 +105,14 @@ def _get_styles() -> dict:
             fontName="Helvetica", fontSize=9, textColor=C_GRAY_LIGHT,
             spaceAfter=10, leading=12),
         "type_badge": ParagraphStyle("TypeBadge", parent=base["Normal"],
-            fontName="Helvetica-Bold", fontSize=8, textColor=C_ACCENT,
+            fontName="Helvetica-Bold", fontSize=8, textColor=C_GRAY,
             spaceAfter=6, leading=10),
         "h2": ParagraphStyle("PDFH2", parent=base["Heading2"],
-            fontName="Helvetica-Bold", fontSize=14, textColor=C_BLACK,
+            fontName="Helvetica-Bold", fontSize=14, textColor=C_ACCENT,
             spaceBefore=18, spaceAfter=8, leading=17),
         "h3": ParagraphStyle("PDFH3", parent=base["Heading3"],
-            fontName="Helvetica-Bold", fontSize=11, textColor=C_DARK,
-            spaceBefore=12, spaceAfter=6, leading=14),
+            fontName="Helvetica-Bold", fontSize=12, textColor=HexColor("#1e40af"),
+            spaceBefore=12, spaceAfter=6, leading=15),
         "body": ParagraphStyle("PDFBody", parent=base["Normal"],
             fontName="Helvetica", fontSize=10, textColor=C_DARK,
             leading=15, spaceAfter=6),
@@ -218,7 +218,7 @@ def _build_alerts(alerts: list, styles: dict) -> list:
         label_s = ParagraphStyle("_al", fontName="Helvetica-Bold", fontSize=7,
                                  textColor=ac["border"], leading=10)
         text_s = ParagraphStyle("_at", fontName="Helvetica", fontSize=9,
-                                textColor=ac["text"], leading=13)
+                                textColor=C_BLACK, leading=13)
 
         row = [[Paragraph(ac["label"], label_s), Paragraph(escape(message), text_s)]]
         t = Table(row, colWidths=[55, 6.5 * inch - 65])

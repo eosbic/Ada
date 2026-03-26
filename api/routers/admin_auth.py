@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-import jwt
+from jose import jwt
 from fastapi import APIRouter, Request, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy import text as sql_text

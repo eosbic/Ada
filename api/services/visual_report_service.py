@@ -48,21 +48,156 @@ def _markdown_to_html(md):
     return "<p>" + html + "</p>"
 
 
-def _extract_chart_data(metrics):
-    if not metrics or not isinstance(metrics, dict):
+def _parse_number(text: str) -> Optional[float]:
+    """Convierte texto tipo '$1,234.56' o '1.234,56' a float."""
+    clean = (text or "").strip()
+    clean = re.sub(r"[%$€\s]", "", clean)
+    if not clean:
         return None
-    numeric = {k: v for k, v in metrics.items()
-               if isinstance(v, (int, float)) and not k.startswith("_")}
-    if len(numeric) < 2:
+    if "," in clean and "." in clean:
+        if clean.rindex(",") > clean.rindex("."):
+            clean = clean.replace(".", "").replace(",", ".")
+        else:
+            clean = clean.replace(",", "")
+    elif "," in clean and "." not in clean:
+        if clean.count(",") == 1 and len(clean.split(",")[1]) <= 2:
+            clean = clean.replace(",", ".")
+        else:
+            clean = clean.replace(",", "")
+    try:
+        return float(clean)
+    except ValueError:
         return None
-    totals = {k: v for k, v in numeric.items() if "total" in k.lower()}
-    chart = totals if len(totals) >= 2 else numeric
-    items = list(chart.items())[:10]
-    return {
-        "labels": [_format_metric_label(k) for k, _ in items],
-        "values": [v for _, v in items],
-        "count": len(items),
-    }
+
+
+def _extract_rankings_from_markdown(content: str) -> list[dict]:
+    """Busca secciones tipo ranking (top vendedores, clientes, productos) en markdown."""
+    rankings: list[dict] = []
+    if not content:
+        return rankings
+    section_pattern = re.compile(
+        r"(?:#+\s*|(?:\*\*))?((?:top|ranking|mejores|principales)\s+\d*\s*"
+        r"(?:vendedor|cliente|producto|categor|sucursal|region|empleado|proveedor)"
+        r"[^\n]*?)(?:\*\*)?[\n:]",
+        flags=re.IGNORECASE,
+    )
+    item_pattern = re.compile(
+        r"(?:^\s*[-*]\s*|\d+\.\s*)"
+        r"[*]*([A-Za-z0-9À-ÿ\s/.&]+?)[*]*"
+        r"\s*[:—–-]+\s*"
+        r"[\$]?\s*([\d,.]+)",
+        flags=re.MULTILINE,
+    )
+    sections = list(section_pattern.finditer(content))
+    for i, match in enumerate(sections):
+        title = match.group(1).strip().rstrip("*: ")
+        start = match.end()
+        end = sections[i + 1].start() if i + 1 < len(sections) else start + 1500
+        block = content[start:end]
+        items = item_pattern.findall(block)
+        if len(items) >= 2:
+            labels = [it[0].strip()[:35] for it in items[:15]]
+            values = [_parse_number(it[1]) for it in items[:15]]
+            if all(v is not None for v in values):
+                chart_id = re.sub(r"\W+", "_", title.lower())[:30]
+                rankings.append({
+                    "id": chart_id,
+                    "title": title,
+                    "labels": labels,
+                    "values": values,
+                    "type": "horizontalBar",
+                })
+    return rankings
+
+
+def _extract_tables_from_markdown(content: str) -> list[dict]:
+    """Extrae tablas markdown simples con 2+ filas numericas."""
+    charts: list[dict] = []
+    if not content:
+        return charts
+    table_pattern = re.compile(
+        r"(\|[^\n]+\|\n\|[-:\s|]+\|\n(?:\|[^\n]+\|\n?)+)",
+        flags=re.MULTILINE,
+    )
+    for idx, match in enumerate(table_pattern.finditer(content)):
+        lines = match.group(0).strip().split("\n")
+        if len(lines) < 3:
+            continue
+        headers = [h.strip() for h in lines[0].split("|") if h.strip()]
+        if len(headers) < 2:
+            continue
+        labels = []
+        values = []
+        for line in lines[2:]:
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+            if len(cells) >= 2:
+                label = re.sub(r"[*`]", "", cells[0]).strip()[:35]
+                for cell in cells[1:]:
+                    num = _parse_number(cell)
+                    if num is not None:
+                        labels.append(label)
+                        values.append(num)
+                        break
+        if len(labels) >= 2:
+            title = headers[0] if headers else f"Tabla {idx + 1}"
+            chart_id = f"tabla_{idx}"
+            chart_type = "horizontalBar" if len(labels) >= 4 else "bar"
+            charts.append({
+                "id": chart_id, "title": title,
+                "labels": labels, "values": values, "type": chart_type,
+            })
+    return charts
+
+
+def _extract_chart_data(metrics, markdown_content=""):
+    """
+    Retorna una LISTA de charts desde metrics_summary y markdown.
+    Cada chart: {id, title, labels, values, type: 'bar'|'horizontalBar'}
+    """
+    charts: list[dict] = []
+    metrics = metrics or {}
+
+    # Agrupar metricas por sufijo
+    col_totals: dict[str, float] = {}
+    col_promedios: dict[str, float] = {}
+    standalone: dict[str, float] = {}
+    for key, val in metrics.items():
+        if not isinstance(val, (int, float)) or key.startswith("_"):
+            continue
+        if key.endswith("_total"):
+            col_totals[key[:-len("_total")]] = float(val)
+        elif key.endswith("_promedio"):
+            col_promedios[key[:-len("_promedio")]] = float(val)
+        else:
+            standalone[key] = float(val)
+
+    if len(col_totals) >= 2:
+        charts.append({
+            "id": "totales", "title": "Totales por categoria",
+            "labels": [_format_metric_label(k) for k in col_totals],
+            "values": list(col_totals.values()), "type": "bar",
+        })
+    if len(col_promedios) >= 2:
+        charts.append({
+            "id": "promedios", "title": "Promedios por categoria",
+            "labels": [_format_metric_label(k) for k in col_promedios],
+            "values": list(col_promedios.values()), "type": "bar",
+        })
+    if len(standalone) >= 2:
+        charts.append({
+            "id": "metricas", "title": "Metricas clave",
+            "labels": [_format_metric_label(k) for k in standalone],
+            "values": list(standalone.values()), "type": "bar",
+        })
+
+    # Rankings y tablas del markdown
+    for r in _extract_rankings_from_markdown(markdown_content):
+        charts.append(r)
+    for tc in _extract_tables_from_markdown(markdown_content):
+        if not any(c["id"] == tc["id"] for c in charts):
+            charts.append(tc)
+
+    return charts
 
 
 def _render_header(title, report_type, created_at, generated_by, source_file):
@@ -116,45 +251,68 @@ def _render_alerts(alerts):
     return '<div class="section"><h2 class="section-title">Alertas y senales</h2><div class="alert-summary">' + str(len(alerts)) + ' alertas detectadas &mdash; ' + summary + '</div><div class="alerts-list">' + items + '</div></div>'
 
 
-def _render_chart(metrics):
-    chart_data = _extract_chart_data(metrics)
-    if not chart_data or chart_data["count"] < 2:
+def _render_chart(metrics, markdown_content=""):
+    """Itera la lista de charts, crea un canvas por chart, horizontalBar para rankings, altura dinamica."""
+    charts = _extract_chart_data(metrics, markdown_content)
+    if not charts:
         return ""
-    labels_json = json.dumps(chart_data["labels"], ensure_ascii=False)
-    values_json = json.dumps(chart_data["values"])
-    return """
-    <div class="section">
-        <h2 class="section-title">Visualizacion</h2>
-        <div class="chart-container"><canvas id="mainChart"></canvas></div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        new Chart(document.getElementById('mainChart').getContext('2d'), {
-            type: 'bar',
-            data: {
-                labels: """ + labels_json + """,
-                datasets: [{
-                    label: 'Valor',
-                    data: """ + values_json + """,
-                    backgroundColor: isDark
-                        ? ['#7F77DD','#1D9E75','#378ADD','#D85A30','#D4537E','#BA7517','#639922','#E24B4A','#888780','#534AB7']
-                        : ['#AFA9EC','#5DCAA5','#85B7EB','#F0997B','#ED93B1','#FAC775','#97C459','#F09595','#B4B2A9','#CECBF6'],
-                    borderRadius: 6, borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { beginAtZero: true, grid: { color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }, ticks: { color: isDark ? '#9c9a92' : '#73726c', callback: function(v) { return v.toLocaleString(); } } },
-                    x: { grid: { display: false }, ticks: { color: isDark ? '#9c9a92' : '#73726c', maxRotation: 45, autoSkip: false } }
-                }
-            }
-        });
-    });
-    </script>"""
+
+    dark_colors = "['#7F77DD','#1D9E75','#378ADD','#D85A30','#D4537E','#BA7517','#639922','#E24B4A','#888780','#534AB7']"
+    light_colors = "['#AFA9EC','#5DCAA5','#85B7EB','#F0997B','#ED93B1','#FAC775','#97C459','#F09595','#B4B2A9','#CECBF6']"
+    green_dark = "['#1D9E75','#2AB58A','#34C896','#5DCAA5','#7FD4B5','#1D9E75','#2AB58A','#34C896','#5DCAA5','#7FD4B5']"
+    green_light = "['#5DCAA5','#7FD4B5','#97DCC3','#B0E4D1','#C5EBDD','#5DCAA5','#7FD4B5','#97DCC3','#B0E4D1','#C5EBDD']"
+
+    blocks = []
+    for i, chart in enumerate(charts):
+        canvas_id = f"chart_{chart.get('id', i)}"
+        title = chart.get("title", f"Grafico {i + 1}")
+        labels_json = json.dumps(chart.get("labels", []), ensure_ascii=False)
+        values_json = json.dumps(chart.get("values", []))
+        is_horizontal = chart.get("type") == "horizontalBar"
+        num_items = len(chart.get("labels", []))
+
+        # Altura dinamica
+        if is_horizontal:
+            chart_height = max(250, num_items * 38 + 80)
+        else:
+            chart_height = max(280, num_items * 30 + 100)
+
+        axis_config = "indexAxis: 'y'," if is_horizontal else ""
+        bg_dark = green_dark if is_horizontal else dark_colors
+        bg_light = green_light if is_horizontal else light_colors
+        value_axis = "x" if is_horizontal else "y"
+        label_axis = "y" if is_horizontal else "x"
+
+        blocks.append(
+            '<div class="section">'
+            '<h2 class="section-title">' + title + '</h2>'
+            '<div class="chart-container" style="height:' + str(chart_height) + 'px">'
+            '<canvas id="' + canvas_id + '"></canvas></div></div>'
+            '<script>'
+            'document.addEventListener("DOMContentLoaded", function() {'
+            '  var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;'
+            '  new Chart(document.getElementById("' + canvas_id + '").getContext("2d"), {'
+            '    type: "bar",'
+            '    data: { labels: ' + labels_json + ', datasets: [{ label: "Valor", data: ' + values_json + ','
+            '      backgroundColor: isDark ? ' + bg_dark + ' : ' + bg_light + ','
+            '      borderRadius: 6, borderSkipped: false }] },'
+            '    options: { ' + axis_config + ' responsive: true, maintainAspectRatio: false,'
+            '      plugins: { legend: { display: false } },'
+            '      scales: {'
+            '        ' + value_axis + ': { beginAtZero: true, grid: { color: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" },'
+            '          ticks: { color: isDark ? "#9c9a92" : "#73726c", callback: function(v) { return v.toLocaleString("es-CO"); } } },'
+            '        ' + label_axis + ': { grid: { display: false }, ticks: { color: isDark ? "#9c9a92" : "#73726c", maxRotation: 45, autoSkip: false } }'
+            '      }'
+            '    }'
+            '  });'
+            '});'
+            '</script>'
+        )
+
+    return (
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>'
+        + "\n".join(blocks)
+    )
 
 
 def _render_content(markdown):
@@ -188,7 +346,7 @@ def generate_visual_report(report):
     header = _render_header(title, report_type, created_at, generated_by, source_file)
     metrics_html = _render_metrics(metrics)
     alerts_html = _render_alerts(alerts)
-    chart_html = _render_chart(metrics)
+    chart_html = _render_chart(metrics, markdown)
     content_html = _render_content(markdown)
 
     if report_type in ("excel_analysis", "consolidated_analysis"):

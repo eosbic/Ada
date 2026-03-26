@@ -10,6 +10,7 @@ POST /resume/{thread_id}   → Reanudar grafo pausado (HITL)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
@@ -83,6 +84,32 @@ async def list_reports(
         })
 
     return {"status": "success", "data": reports, "total": len(reports)}
+
+
+@router.get("/reports/{report_id}/visual", response_class=HTMLResponse)
+async def visual_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """Reporte visual HTML con graficos Chart.js interactivos."""
+    from api.services.visual_report_service import generate_visual_report
+
+    result = await db.execute(
+        text("SELECT * FROM ada_reports WHERE id = :id"),
+        {"id": report_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+
+    report_dict = {
+        "title": row.title,
+        "report_type": row.report_type,
+        "markdown_content": row.markdown_content,
+        "metrics_summary": row.metrics_summary,
+        "alerts": row.alerts,
+        "created_at": row.created_at,
+        "generated_by": row.generated_by,
+        "source_file": row.source_file,
+    }
+    return HTMLResponse(content=generate_visual_report(report_dict))
 
 
 @router.get("/reports/{report_id}")

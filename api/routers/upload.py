@@ -74,6 +74,7 @@ async def upload_file(
                 "alerts": result.get("alerts", []),
                 "model_used": result.get("model_used", "unknown"),
                 "sources_used": result.get("sources_used", []),
+                "report_id": result.get("report_id"),
             }
 
         if ext in DOC_EXTENSIONS:

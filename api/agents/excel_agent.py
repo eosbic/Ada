@@ -322,6 +322,7 @@ def store_analysis(state: ExcelState) -> dict:
         run_kg_pipeline(report_id, empresa_id, response, alerts_text)
 
     return {
+        "report_id": report_id,
         "sources_used": [
             {"name": "excel_pipeline", "detail": file_name, "confidence": 0.9},
             {"name": "qdrant_excel_reports", "detail": "upsert", "confidence": 0.82},

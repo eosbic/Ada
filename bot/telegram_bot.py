@@ -426,7 +426,16 @@ async def _send_file_to_upload(update: Update, user_data: dict, file_name: str, 
             return
 
         response_text = data.get("response", "Analisis completado.")
-        await processing_msg.edit_text(response_text[:4000])
+        report_id = data.get("report_id")
+
+        if report_id:
+            visual_link = f"\n\n📊 Ver reporte visual: https://backend-ada.duckdns.org/api/v1/reports/{report_id}/visual"
+            max_len = 4000 - len(visual_link)
+            response_text = response_text[:max_len] + visual_link
+        else:
+            response_text = response_text[:4000]
+
+        await processing_msg.edit_text(response_text)
 
         alerts = data.get("alerts", [])
         if alerts:

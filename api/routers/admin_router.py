@@ -67,6 +67,12 @@ class CreateUsuarioRequest(BaseModel):
     rol: str = "member"
 
 
+class UpdateUsuarioRequest(BaseModel):
+    nombre: Optional[str] = None
+    rol: Optional[str] = None
+    password: Optional[str] = None
+
+
 class UpdateBudgetRequest(BaseModel):
     monthly_limit: float
 
@@ -377,6 +383,54 @@ async def create_usuario(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/users/{user_id}")
+async def update_usuario(
+    user_id: str,
+    req: UpdateUsuarioRequest,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Editar usuario: nombre, rol, password."""
+    if admin["role"] not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Permiso insuficiente")
+
+    updates = {}
+    params = {"id": user_id}
+    if req.nombre is not None:
+        updates["nombre"] = f"nombre = :nombre"
+        params["nombre"] = req.nombre
+    if req.rol is not None:
+        valid_roles = {"admin", "member", "vendedor", "gerente", "logistica", "contador", "marketing", "rrhh", "legal"}
+        if req.rol not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Roles validos: {', '.join(sorted(valid_roles))}")
+        updates["rol"] = f"rol = :rol"
+        params["rol"] = req.rol
+    if req.password is not None:
+        from api.security import hash_password as hash_pw
+        updates["password"] = f"password = :password"
+        params["password"] = hash_pw(req.password)
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nada que actualizar")
+
+    set_clause = ", ".join(updates.values())
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            sql_text(f"UPDATE usuarios SET {set_clause} WHERE id = :id RETURNING id"),
+            params,
+        )
+        if not result.fetchone():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        await db.commit()
+
+    audit_details = {k: v for k, v in {"nombre": req.nombre, "rol": req.rol}.items() if v is not None}
+    if req.password:
+        audit_details["password"] = "***changed***"
+    await _audit(admin["admin_id"], "update_usuario", "usuario", user_id, audit_details, _get_ip(request))
+
+    return {"updated": True, "user_id": user_id}
+
+
 @router.delete("/usuarios/{user_id}")
 async def delete_usuario(
     user_id: str,
@@ -394,6 +448,172 @@ async def delete_usuario(
     await _audit(admin["admin_id"], "delete_usuario", "usuario", user_id, {}, _get_ip(request))
 
     return {"deleted": True}
+
+
+@router.delete("/empresas/{empresa_id}")
+async def delete_empresa(
+    empresa_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Eliminar empresa con cascade (reportes, usuarios, credenciales, budget, profile)."""
+    if admin["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Solo superadmin puede eliminar empresas")
+
+    async with AsyncSessionLocal() as db:
+        empresa = (await db.execute(
+            sql_text("SELECT nombre FROM empresas WHERE id = :id"), {"id": empresa_id}
+        )).fetchone()
+        if not empresa:
+            raise HTTPException(status_code=404, detail="Empresa no encontrada")
+
+        # Cascade delete
+        await db.execute(sql_text("DELETE FROM report_links WHERE report_id IN (SELECT id FROM ada_reports WHERE empresa_id = :id)"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM ada_reports WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM usuarios WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM tenant_credentials WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM budget_limits WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM ada_company_profile WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM tenant_app_config WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM team_members WHERE empresa_id = :id"), {"id": empresa_id})
+        await db.execute(sql_text("DELETE FROM empresas WHERE id = :id"), {"id": empresa_id})
+        await db.commit()
+
+    await _audit(admin["admin_id"], "delete_empresa", "empresa", empresa_id,
+                 {"nombre": empresa.nombre, "cascade": True}, _get_ip(request))
+
+    return {"deleted": True, "empresa_id": empresa_id}
+
+
+@router.get("/empresas/{empresa_id}/users")
+async def list_empresa_users(empresa_id: str, admin: dict = Depends(get_current_admin)):
+    """Lista usuarios de una empresa."""
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            sql_text("""
+                SELECT id, email, nombre, rol, telegram_id, is_active, created_at
+                FROM usuarios WHERE empresa_id = :id ORDER BY created_at
+            """),
+            {"id": empresa_id},
+        )).fetchall()
+
+    return [
+        {
+            "id": str(r.id), "email": r.email, "nombre": r.nombre,
+            "rol": r.rol, "has_telegram": bool(r.telegram_id),
+            "is_active": r.is_active, "created_at": str(r.created_at),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/empresas/{empresa_id}/reports")
+async def list_empresa_reports(
+    empresa_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(get_current_admin),
+):
+    """Lista reportes de una empresa con paginacion."""
+    offset = (page - 1) * limit
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(sql_text("""
+            SELECT id, title, report_type, source_file, generated_by,
+                   is_archived, created_at
+            FROM ada_reports WHERE empresa_id = :eid
+            ORDER BY created_at DESC LIMIT :lim OFFSET :off
+        """), {"eid": empresa_id, "lim": limit, "off": offset})).fetchall()
+
+        total = (await db.execute(
+            sql_text("SELECT COUNT(*) FROM ada_reports WHERE empresa_id = :eid"),
+            {"eid": empresa_id},
+        )).scalar()
+
+        # Stats por tipo
+        type_stats = (await db.execute(sql_text("""
+            SELECT report_type, COUNT(*) as count
+            FROM ada_reports WHERE empresa_id = :eid
+            GROUP BY report_type ORDER BY count DESC
+        """), {"eid": empresa_id})).fetchall()
+
+    return {
+        "page": page, "limit": limit, "total": total,
+        "type_stats": [{"type": r.report_type, "count": r.count} for r in type_stats],
+        "data": [
+            {
+                "id": str(r.id), "title": r.title, "report_type": r.report_type,
+                "source_file": r.source_file, "generated_by": r.generated_by,
+                "is_archived": r.is_archived, "created_at": str(r.created_at),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.delete("/reports/{report_id}")
+async def delete_report(
+    report_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Eliminar un reporte."""
+    if admin["role"] not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Permiso insuficiente")
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            sql_text("SELECT title FROM ada_reports WHERE id = :id"), {"id": report_id}
+        )).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+
+        await db.execute(sql_text("DELETE FROM report_links WHERE report_id = :id"), {"id": report_id})
+        await db.execute(sql_text("DELETE FROM ada_reports WHERE id = :id"), {"id": report_id})
+        await db.commit()
+
+    await _audit(admin["admin_id"], "delete_report", "report", report_id,
+                 {"title": row.title}, _get_ip(request))
+
+    return {"deleted": True}
+
+
+@router.get("/stats")
+async def global_stats(admin: dict = Depends(get_current_admin)):
+    """Stats generales para dashboard: totales + reportes por dia."""
+    async with AsyncSessionLocal() as db:
+        total_empresas = (await db.execute(sql_text("SELECT COUNT(*) FROM empresas"))).scalar()
+        total_usuarios = (await db.execute(sql_text("SELECT COUNT(*) FROM usuarios"))).scalar()
+        total_reportes = (await db.execute(sql_text("SELECT COUNT(*) FROM ada_reports"))).scalar()
+
+        # Reportes por dia (ultimos 30 dias)
+        reportes_por_dia = (await db.execute(sql_text("""
+            SELECT DATE(created_at) as dia, COUNT(*) as count
+            FROM ada_reports
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY DATE(created_at)
+            ORDER BY dia
+        """))).fetchall()
+
+        # Empresas activas (con reportes en ultimos 7 dias)
+        empresas_activas = (await db.execute(sql_text("""
+            SELECT DISTINCT e.id, e.nombre, MAX(r.created_at) as last_activity
+            FROM empresas e
+            JOIN ada_reports r ON r.empresa_id = e.id
+            WHERE r.created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY e.id, e.nombre
+            ORDER BY last_activity DESC
+        """))).fetchall()
+
+    return {
+        "total_empresas": total_empresas,
+        "total_usuarios": total_usuarios,
+        "total_reportes": total_reportes,
+        "reportes_por_dia": [{"dia": str(r.dia), "count": r.count} for r in reportes_por_dia],
+        "empresas_activas": [
+            {"id": str(r.id), "nombre": r.nombre, "last_activity": str(r.last_activity)}
+            for r in empresas_activas
+        ],
+    }
 
 
 @router.put("/empresas/{empresa_id}/budget")

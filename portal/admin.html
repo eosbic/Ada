@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ada Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+/* ═══ RESET & THEME ═══ */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#050810;--bg1:#080c18;--bg2:#0c1220;--bg-card:#101828;--bg-input:#0a1020;
+  --border:#1a2840;--accent:#00e5ff;--accent-dim:#00b8cc;--green:#00ff9d;--red:#ff3d5a;
+  --yellow:#ffd60a;--text1:#e0f4ff;--text2:#7eafc9;--text3:#3d6478;
+  --overlay:rgba(5,8,16,0.85);--r:8px;
+}
+html{font-size:14px}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text1);min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;border-radius:var(--r);font-size:.875rem;font-weight:500;transition:.2s}
+
+/* ═══ LAYOUT ═══ */
+.app{display:flex;min-height:100vh}
+.sidebar{width:220px;background:var(--bg1);border-right:1px solid var(--border);padding:1.2rem 0;position:fixed;height:100vh;display:flex;flex-direction:column}
+.sidebar .logo{padding:0 1.2rem .8rem;font-size:1.1rem;font-weight:700;color:var(--accent);letter-spacing:.05em;border-bottom:1px solid var(--border);margin-bottom:.6rem}
+.sidebar .logo span{color:var(--text2);font-weight:400;font-size:.75rem;display:block}
+.nav-item{display:flex;align-items:center;gap:.6rem;padding:.6rem 1.2rem;color:var(--text2);font-size:.85rem;cursor:pointer;transition:.15s;border-left:3px solid transparent}
+.nav-item:hover{color:var(--text1);background:rgba(0,229,255,.04)}
+.nav-item.active{color:var(--accent);background:rgba(0,229,255,.08);border-left-color:var(--accent)}
+.nav-item svg{width:18px;height:18px;flex-shrink:0}
+.sidebar-footer{margin-top:auto;padding:.8rem 1.2rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--text3)}
+.sidebar-footer .admin-name{color:var(--text2);font-weight:500}
+.sidebar-footer .logout{color:var(--red);cursor:pointer;margin-top:.4rem;display:inline-block}
+.main{margin-left:220px;flex:1;padding:1.5rem 2rem;min-height:100vh}
+
+/* ═══ COMPONENTS ═══ */
+.page-title{font-size:1.4rem;font-weight:700;margin-bottom:1.2rem;display:flex;align-items:center;gap:.6rem}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);padding:1.2rem}
+.stat-card .label{font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem}
+.stat-card .value{font-size:1.6rem;font-weight:700}
+.stat-card .value.accent{color:var(--accent)}
+.stat-card .value.green{color:var(--green)}
+
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);padding:1.2rem;margin-bottom:1rem}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+.card-title{font-size:1rem;font-weight:600}
+
+/* Table */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{text-align:left;padding:.6rem .8rem;color:var(--text3);font-weight:500;text-transform:uppercase;font-size:.7rem;letter-spacing:.05em;border-bottom:1px solid var(--border)}
+td{padding:.55rem .8rem;border-bottom:1px solid rgba(26,40,64,.5);vertical-align:middle}
+tr:hover td{background:rgba(0,229,255,.03)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600}
+.badge-green{background:rgba(0,255,157,.12);color:var(--green)}
+.badge-blue{background:rgba(0,229,255,.12);color:var(--accent)}
+.badge-red{background:rgba(255,61,90,.12);color:var(--red)}
+.badge-yellow{background:rgba(255,214,10,.12);color:var(--yellow)}
+.badge-gray{background:rgba(125,140,165,.12);color:var(--text2)}
+
+/* Buttons */
+.btn{padding:.45rem .9rem;border-radius:var(--r)}
+.btn-primary{background:var(--accent);color:#050810;font-weight:600}
+.btn-primary:hover{background:var(--accent-dim)}
+.btn-danger{background:rgba(255,61,90,.15);color:var(--red);border:1px solid rgba(255,61,90,.3)}
+.btn-danger:hover{background:rgba(255,61,90,.25)}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text1);border-color:var(--text2)}
+.btn-sm{padding:.3rem .6rem;font-size:.75rem}
+.btn-group{display:flex;gap:.4rem}
+
+/* Forms */
+.form-group{margin-bottom:1rem}
+.form-group label{display:block;font-size:.75rem;color:var(--text2);margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.04em}
+.form-group input,.form-group select{width:100%;padding:.5rem .7rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r);color:var(--text1);font-size:.85rem;font-family:inherit}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--accent)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+
+/* Search */
+.search-bar{display:flex;gap:.6rem;margin-bottom:1rem}
+.search-bar input{flex:1;padding:.5rem .8rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r);color:var(--text1);font-size:.85rem}
+.search-bar input:focus{outline:none;border-color:var(--accent)}
+
+/* Modal */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--overlay);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:1.5rem;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.modal-title{font-size:1.1rem;font-weight:600;margin-bottom:1rem}
+.modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.2rem}
+
+/* Login */
+.login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+.login-box{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:2rem;width:380px;max-width:92vw}
+.login-box h1{font-size:1.3rem;font-weight:700;color:var(--accent);margin-bottom:.3rem}
+.login-box .sub{color:var(--text3);font-size:.8rem;margin-bottom:1.5rem}
+.login-error{background:rgba(255,61,90,.1);border:1px solid rgba(255,61,90,.3);color:var(--red);padding:.5rem .8rem;border-radius:var(--r);font-size:.8rem;margin-bottom:1rem}
+
+/* Chart */
+.chart-container{position:relative;height:220px;background:var(--bg2);border-radius:var(--r);padding:.8rem}
+
+/* Toast */
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.7rem 1.2rem;border-radius:var(--r);font-size:.82rem;font-weight:500;z-index:2000;animation:slideIn .3s ease}
+.toast-success{background:rgba(0,255,157,.15);color:var(--green);border:1px solid rgba(0,255,157,.3)}
+.toast-error{background:rgba(255,61,90,.15);color:var(--red);border:1px solid rgba(255,61,90,.3)}
+@keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* Empty state */
+.empty{text-align:center;padding:3rem;color:var(--text3)}
+.empty .icon{font-size:2rem;margin-bottom:.5rem}
+
+/* Responsive */
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{margin-left:0;padding:1rem}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+  .form-row{grid-template-columns:1fr}
+  .modal{width:95vw}
+}
+
+/* Loading */
+.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const API = window.location.origin;
+
+/* ═══ API HELPERS ═══ */
+function api(path, opts = {}) {
+  const token = localStorage.getItem('admin_token');
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (opts.body && !(opts.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  return fetch(`${API}${path}`, { ...opts, headers }).then(async r => {
+    const data = await r.json();
+    if (r.status === 401) { localStorage.removeItem('admin_token'); localStorage.removeItem('admin_user'); window.location.reload(); }
+    if (!r.ok) throw new Error(data.detail || 'Error');
+    return data;
+  });
+}
+const get = (p) => api(p);
+const post = (p, b) => api(p, { method: 'POST', body: b });
+const put = (p, b) => api(p, { method: 'PUT', body: b });
+const del = (p) => api(p, { method: 'DELETE' });
+
+/* ═══ TOAST ═══ */
+function Toast({ message, type, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []);
+  return <div className={`toast toast-${type}`}>{message}</div>;
+}
+
+/* ═══ MODAL ═══ */
+function Modal({ title, children, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal">
+        <div className="modal-title">{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ═══ CONFIRM MODAL ═══ */
+function ConfirmModal({ title, message, onConfirm, onClose, danger }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p style={{color:'var(--text2)',fontSize:'.85rem',marginBottom:'1rem'}}>{message}</p>
+      <div className="modal-actions">
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className={danger ? 'btn btn-danger' : 'btn btn-primary'} onClick={onConfirm}>
+          {danger ? 'Eliminar' : 'Confirmar'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ═══ ICONS (inline SVG) ═══ */
+const Icons = {
+  dashboard: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
+  building: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22V12h6v10"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01"/></svg>,
+  users: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
+  file: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>,
+};
+
+/* ═══ LOGIN SCREEN ═══ */
+function LoginScreen({ onLogin, toast, setToast }) {
+  const [step, setStep] = useState('credentials'); // credentials | otp
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [emailMasked, setEmailMasked] = useState('');
+
+  async function handleLogin(e) {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      const data = await post('/admin/auth/login', { email, password });
+      if (data.otp_sent) {
+        setEmailMasked(data.email_masked);
+        setStep('otp');
+        setToast({ message: `Codigo enviado a ${data.email_masked}`, type: 'success' });
+      }
+    } catch (err) { setError(err.message); }
+    setLoading(false);
+  }
+
+  async function handleOtp(e) {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      const data = await post('/admin/auth/verify-otp', { email, otp_code: otp });
+      localStorage.setItem('admin_token', data.token);
+      localStorage.setItem('admin_user', JSON.stringify(data.admin));
+      onLogin(data.admin);
+    } catch (err) { setError(err.message); }
+    setLoading(false);
+  }
+
+  return (
+    <div className="login-screen">
+      <div className="login-box">
+        <h1>Ada Admin</h1>
+        <p className="sub">Portal de administracion</p>
+        {error && <div className="login-error">{error}</div>}
+
+        {step === 'credentials' ? (
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <label>Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus />
+            </div>
+            <div className="form-group">
+              <label>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+            </div>
+            <button className="btn btn-primary" style={{width:'100%',padding:'.6rem'}} disabled={loading}>
+              {loading ? <span className="spinner" /> : 'Iniciar sesion'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleOtp}>
+            <p style={{color:'var(--text2)',fontSize:'.82rem',marginBottom:'1rem'}}>
+              Codigo enviado a <strong>{emailMasked}</strong>
+            </p>
+            <div className="form-group">
+              <label>Codigo OTP</label>
+              <input type="text" value={otp} onChange={e => setOtp(e.target.value)} maxLength={6}
+                     placeholder="000000" required autoFocus style={{textAlign:'center',fontSize:'1.2rem',letterSpacing:'.3em'}} />
+            </div>
+            <button className="btn btn-primary" style={{width:'100%',padding:'.6rem'}} disabled={loading}>
+              {loading ? <span className="spinner" /> : 'Verificar'}
+            </button>
+            <button type="button" className="btn btn-ghost" style={{width:'100%',marginTop:'.5rem'}}
+                    onClick={() => { setStep('credentials'); setOtp(''); setError(''); }}>Volver</button>
+          </form>
+        )}
+      </div>
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+/* ═══ DASHBOARD PAGE ═══ */
+function DashboardPage({ setToast }) {
+  const [stats, setStats] = useState(null);
+  const chartRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => { get('/admin/api/stats').then(setStats).catch(e => setToast({message:e.message,type:'error'})); }, []);
+
+  useEffect(() => {
+    if (!stats || !stats.reportes_por_dia?.length || !chartRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+    chartInstance.current = new Chart(chartRef.current.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: stats.reportes_por_dia.map(d => d.dia.slice(5)),
+        datasets: [{ label: 'Reportes', data: stats.reportes_por_dia.map(d => d.count),
+          backgroundColor: 'rgba(0,229,255,0.4)', borderColor: '#00e5ff', borderWidth: 1, borderRadius: 4 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#7eafc9' } },
+          x: { grid: { display: false }, ticks: { color: '#7eafc9', maxRotation: 45 } }
+        }
+      }
+    });
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [stats]);
+
+  if (!stats) return <div style={{textAlign:'center',padding:'3rem'}}><span className="spinner" /></div>;
+
+  return (
+    <div>
+      <div className="page-title">Dashboard</div>
+      <div className="stats-grid">
+        <div className="stat-card"><div className="label">Empresas</div><div className="value accent">{stats.total_empresas}</div></div>
+        <div className="stat-card"><div className="label">Usuarios</div><div className="value accent">{stats.total_usuarios}</div></div>
+        <div className="stat-card"><div className="label">Reportes</div><div className="value accent">{stats.total_reportes}</div></div>
+        <div className="stat-card"><div className="label">Activas (7d)</div><div className="value green">{stats.empresas_activas?.length || 0}</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Reportes generados (30 dias)</div>
+        <div className="chart-container"><canvas ref={chartRef} /></div>
+      </div>
+
+      {stats.empresas_activas?.length > 0 && (
+        <div className="card">
+          <div className="card-title">Empresas activas</div>
+          <div className="table-wrap"><table>
+            <thead><tr><th>Empresa</th><th>Ultima actividad</th></tr></thead>
+            <tbody>{stats.empresas_activas.map(e => (
+              <tr key={e.id}><td>{e.nombre}</td><td>{e.last_activity?.slice(0,16)}</td></tr>
+            ))}</tbody>
+          </table></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══ EMPRESAS PAGE ═══ */
+function EmpresasPage({ setToast, onSelectEmpresa }) {
+  const [empresas, setEmpresas] = useState([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showEdit, setShowEdit] = useState(null);
+  const [showDelete, setShowDelete] = useState(null);
+  const [form, setForm] = useState({ nombre: '', sector: 'generic' });
+
+  const load = useCallback(() => {
+    setLoading(true);
+    get(`/admin/api/empresas?search=${encodeURIComponent(search)}&limit=100`)
+      .then(d => setEmpresas(d.data))
+      .catch(e => setToast({message:e.message,type:'error'}))
+      .finally(() => setLoading(false));
+  }, [search]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleCreate() {
+    try {
+      await post('/admin/api/empresas', form);
+      setToast({ message: 'Empresa creada', type: 'success' });
+      setShowCreate(false); setForm({ nombre: '', sector: 'generic' }); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  async function handleEdit() {
+    try {
+      await put(`/admin/api/empresas/${showEdit.id}`, form);
+      setToast({ message: 'Empresa actualizada', type: 'success' });
+      setShowEdit(null); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  async function handleDelete() {
+    try {
+      await del(`/admin/api/empresas/${showDelete.id}`);
+      setToast({ message: 'Empresa eliminada', type: 'success' });
+      setShowDelete(null); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  return (
+    <div>
+      <div className="card-header" style={{marginBottom:'1rem'}}>
+        <div className="page-title" style={{marginBottom:0}}>Empresas</div>
+        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic'}); setShowCreate(true); }}>+ Nueva empresa</button>
+      </div>
+
+      <div className="search-bar">
+        <input placeholder="Buscar por nombre o sector..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      {loading ? <div style={{textAlign:'center',padding:'2rem'}}><span className="spinner" /></div> : (
+        <div className="card" style={{padding:0}}>
+          <div className="table-wrap"><table>
+            <thead><tr><th>Nombre</th><th>Sector</th><th>Usuarios</th><th>Reportes</th><th>Plan</th><th>Creada</th><th>Acciones</th></tr></thead>
+            <tbody>
+              {empresas.map(e => (
+                <tr key={e.id}>
+                  <td><a href="#" onClick={ev => { ev.preventDefault(); onSelectEmpresa(e); }} style={{fontWeight:500}}>{e.nombre}</a></td>
+                  <td><span className="badge badge-blue">{e.sector}</span></td>
+                  <td>{e.user_count}</td>
+                  <td>{e.report_count}</td>
+                  <td><span className="badge badge-gray">{e.plan_type || 'N/A'}</span></td>
+                  <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{e.created_at?.slice(0,10)}</td>
+                  <td>
+                    <div className="btn-group">
+                      <button className="btn btn-ghost btn-sm" onClick={() => { setForm({nombre:e.nombre,sector:e.sector}); setShowEdit(e); }}>Editar</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(e)}>Eliminar</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {empresas.length === 0 && <tr><td colSpan="7"><div className="empty">Sin empresas</div></td></tr>}
+            </tbody>
+          </table></div>
+        </div>
+      )}
+
+      {showCreate && (
+        <Modal title="Nueva empresa" onClose={() => setShowCreate(false)}>
+          <div className="form-group"><label>Nombre</label><input value={form.nombre} onChange={e => setForm({...form,nombre:e.target.value})} autoFocus /></div>
+          <div className="form-group"><label>Sector</label>
+            <select value={form.sector} onChange={e => setForm({...form,sector:e.target.value})}>
+              {['generic','retail','construccion','salud','agricultura','servicios','tecnologia','educacion','alimentos','transporte','inmobiliario','financiero','consultoria','restaurante','manufactura'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleCreate}>Crear</button>
+          </div>
+        </Modal>
+      )}
+
+      {showEdit && (
+        <Modal title={`Editar: ${showEdit.nombre}`} onClose={() => setShowEdit(null)}>
+          <div className="form-group"><label>Nombre</label><input value={form.nombre} onChange={e => setForm({...form,nombre:e.target.value})} autoFocus /></div>
+          <div className="form-group"><label>Sector</label>
+            <select value={form.sector} onChange={e => setForm({...form,sector:e.target.value})}>
+              {['generic','retail','construccion','salud','agricultura','servicios','tecnologia','educacion','alimentos','transporte','inmobiliario','financiero','consultoria','restaurante','manufactura'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setShowEdit(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleEdit}>Guardar</button>
+          </div>
+        </Modal>
+      )}
+
+      {showDelete && (
+        <ConfirmModal
+          title="Eliminar empresa"
+          message={`Esto eliminara "${showDelete.nombre}" y TODOS sus usuarios, reportes y credenciales. Esta accion no se puede deshacer.`}
+          onConfirm={handleDelete} onClose={() => setShowDelete(null)} danger
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══ EMPRESA DETAIL PAGE ═══ */
+function EmpresaDetailPage({ empresa, setToast, goBack }) {
+  const [detail, setDetail] = useState(null);
+  const [reports, setReports] = useState(null);
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showEditUser, setShowEditUser] = useState(null);
+  const [showDeleteUser, setShowDeleteUser] = useState(null);
+  const [showDeleteReport, setShowDeleteReport] = useState(null);
+  const [userForm, setUserForm] = useState({ nombre: '', email: '', password: '', rol: 'member' });
+
+  const ROLES = ['admin','member','vendedor','gerente','logistica','contador','marketing','rrhh','legal'];
+
+  function load() {
+    get(`/admin/api/empresas/${empresa.id}`).then(setDetail).catch(e => setToast({message:e.message,type:'error'}));
+    get(`/admin/api/empresas/${empresa.id}/reports?limit=100`).then(setReports).catch(() => {});
+  }
+  useEffect(() => { load(); }, [empresa.id]);
+
+  async function handleCreateUser() {
+    try {
+      await post('/admin/api/usuarios', { ...userForm, empresa_id: empresa.id });
+      setToast({ message: 'Usuario creado', type: 'success' });
+      setShowCreateUser(false); setUserForm({ nombre: '', email: '', password: '', rol: 'member' }); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  async function handleEditUser() {
+    const body = {};
+    if (userForm.nombre) body.nombre = userForm.nombre;
+    if (userForm.rol) body.rol = userForm.rol;
+    if (userForm.password) body.password = userForm.password;
+    try {
+      await put(`/admin/api/users/${showEditUser.id}`, body);
+      setToast({ message: 'Usuario actualizado', type: 'success' });
+      setShowEditUser(null); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  async function handleDeleteUser() {
+    try {
+      await del(`/admin/api/usuarios/${showDeleteUser.id}`);
+      setToast({ message: 'Usuario eliminado', type: 'success' });
+      setShowDeleteUser(null); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  async function handleDeleteReport() {
+    try {
+      await del(`/admin/api/reports/${showDeleteReport.id}`);
+      setToast({ message: 'Reporte eliminado', type: 'success' });
+      setShowDeleteReport(null); load();
+    } catch (e) { setToast({ message: e.message, type: 'error' }); }
+  }
+
+  if (!detail) return <div style={{textAlign:'center',padding:'3rem'}}><span className="spinner" /></div>;
+
+  return (
+    <div>
+      <button className="btn btn-ghost" onClick={goBack} style={{marginBottom:'1rem'}}>← Volver a empresas</button>
+      <div className="page-title">{detail.empresa.nombre} <span className="badge badge-blue">{detail.empresa.sector}</span></div>
+
+      {/* Stats */}
+      <div className="stats-grid">
+        <div className="stat-card"><div className="label">Usuarios</div><div className="value accent">{detail.usuarios.length}</div></div>
+        <div className="stat-card"><div className="label">Reportes</div><div className="value accent">{reports?.total || 0}</div></div>
+        <div className="stat-card"><div className="label">Plan</div><div className="value">{detail.budget?.plan_type || 'N/A'}</div></div>
+        <div className="stat-card"><div className="label">Onboarding</div><div className="value">{detail.profile?.onboarding_completed ? <span style={{color:'var(--green)'}}>Completo</span> : <span style={{color:'var(--yellow)'}}>Pendiente</span>}</div></div>
+      </div>
+
+      {/* Usuarios */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Usuarios ({detail.usuarios.length})</div>
+          <button className="btn btn-primary btn-sm" onClick={() => { setUserForm({nombre:'',email:'',password:'',rol:'member'}); setShowCreateUser(true); }}>+ Nuevo usuario</button>
+        </div>
+        <div className="table-wrap"><table>
+          <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Telegram</th><th>Creado</th><th>Acciones</th></tr></thead>
+          <tbody>
+            {detail.usuarios.map(u => (
+              <tr key={u.id}>
+                <td style={{fontWeight:500}}>{u.nombre}</td>
+                <td style={{color:'var(--text2)'}}>{u.email}</td>
+                <td><span className={`badge ${u.rol==='admin'?'badge-green':'badge-gray'}`}>{u.rol}</span></td>
+                <td>{u.has_telegram ? <span className="badge badge-green">Si</span> : <span className="badge badge-gray">No</span>}</td>
+                <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{u.created_at?.slice(0,10)}</td>
+                <td>
+                  <div className="btn-group">
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setUserForm({nombre:u.nombre,rol:u.rol,password:''}); setShowEditUser(u); }}>Editar</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => setShowDeleteUser(u)}>Eliminar</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {detail.usuarios.length === 0 && <tr><td colSpan="6"><div className="empty">Sin usuarios</div></td></tr>}
+          </tbody>
+        </table></div>
+      </div>
+
+      {/* Reportes */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Reportes ({reports?.total || 0})</div>
+          {reports?.type_stats?.length > 0 && (
+            <div style={{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
+              {reports.type_stats.map(ts => <span key={ts.type} className="badge badge-blue">{ts.type}: {ts.count}</span>)}
+            </div>
+          )}
+        </div>
+        <div className="table-wrap"><table>
+          <thead><tr><th>Titulo</th><th>Tipo</th><th>Fuente</th><th>Modelo</th><th>Fecha</th><th>Acciones</th></tr></thead>
+          <tbody>
+            {(reports?.data || []).map(r => (
+              <tr key={r.id}>
+                <td style={{fontWeight:500,maxWidth:'250px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.title}</td>
+                <td><span className="badge badge-blue">{r.report_type}</span></td>
+                <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{r.source_file || '-'}</td>
+                <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{r.generated_by || '-'}</td>
+                <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{r.created_at?.slice(0,16)}</td>
+                <td>
+                  <div className="btn-group">
+                    <a href={`${API}/api/v1/reports/${r.id}/visual`} target="_blank" className="btn btn-ghost btn-sm">Visual</a>
+                    <button className="btn btn-danger btn-sm" onClick={() => setShowDeleteReport(r)}>Eliminar</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {(!reports?.data || reports.data.length === 0) && <tr><td colSpan="6"><div className="empty">Sin reportes</div></td></tr>}
+          </tbody>
+        </table></div>
+      </div>
+
+      {/* Modal crear usuario */}
+      {showCreateUser && (
+        <Modal title="Nuevo usuario" onClose={() => setShowCreateUser(false)}>
+          <div className="form-row">
+            <div className="form-group"><label>Nombre</label><input value={userForm.nombre} onChange={e => setUserForm({...userForm,nombre:e.target.value})} autoFocus /></div>
+            <div className="form-group"><label>Email</label><input type="email" value={userForm.email} onChange={e => setUserForm({...userForm,email:e.target.value})} /></div>
+          </div>
+          <div className="form-row">
+            <div className="form-group"><label>Password</label><input type="password" value={userForm.password} onChange={e => setUserForm({...userForm,password:e.target.value})} /></div>
+            <div className="form-group"><label>Rol</label>
+              <select value={userForm.rol} onChange={e => setUserForm({...userForm,rol:e.target.value})}>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreateUser(false)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleCreateUser}>Crear</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal editar usuario */}
+      {showEditUser && (
+        <Modal title={`Editar: ${showEditUser.nombre}`} onClose={() => setShowEditUser(null)}>
+          <div className="form-group"><label>Nombre</label><input value={userForm.nombre} onChange={e => setUserForm({...userForm,nombre:e.target.value})} autoFocus /></div>
+          <div className="form-row">
+            <div className="form-group"><label>Rol</label>
+              <select value={userForm.rol} onChange={e => setUserForm({...userForm,rol:e.target.value})}>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div className="form-group"><label>Nueva password (dejar vacio para no cambiar)</label><input type="password" value={userForm.password} onChange={e => setUserForm({...userForm,password:e.target.value})} /></div>
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setShowEditUser(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleEditUser}>Guardar</button>
+          </div>
+        </Modal>
+      )}
+
+      {showDeleteUser && (
+        <ConfirmModal title="Eliminar usuario" message={`Eliminar a "${showDeleteUser.nombre}" (${showDeleteUser.email})?`}
+          onConfirm={handleDeleteUser} onClose={() => setShowDeleteUser(null)} danger />
+      )}
+
+      {showDeleteReport && (
+        <ConfirmModal title="Eliminar reporte" message={`Eliminar "${showDeleteReport.title}"?`}
+          onConfirm={handleDeleteReport} onClose={() => setShowDeleteReport(null)} danger />
+      )}
+    </div>
+  );
+}
+
+/* ═══ MAIN APP ═══ */
+function App() {
+  const [admin, setAdmin] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('admin_user')); } catch { return null; }
+  });
+  const [page, setPage] = useState('dashboard');
+  const [toast, setToast] = useState(null);
+  const [selectedEmpresa, setSelectedEmpresa] = useState(null);
+
+  const token = localStorage.getItem('admin_token');
+  if (!token || !admin) {
+    return <LoginScreen onLogin={setAdmin} toast={toast} setToast={setToast} />;
+  }
+
+  function logout() {
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_user');
+    setAdmin(null);
+  }
+
+  function navTo(p) { setPage(p); setSelectedEmpresa(null); }
+
+  function renderPage() {
+    if (selectedEmpresa) {
+      return <EmpresaDetailPage empresa={selectedEmpresa} setToast={setToast} goBack={() => setSelectedEmpresa(null)} />;
+    }
+    switch (page) {
+      case 'dashboard': return <DashboardPage setToast={setToast} />;
+      case 'empresas': return <EmpresasPage setToast={setToast} onSelectEmpresa={e => setSelectedEmpresa(e)} />;
+      default: return <DashboardPage setToast={setToast} />;
+    }
+  }
+
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="logo">Ada Admin<span>Panel de administracion</span></div>
+        <div className={`nav-item ${page==='dashboard'&&!selectedEmpresa?'active':''}`} onClick={() => navTo('dashboard')}>
+          {Icons.dashboard}<span>Dashboard</span>
+        </div>
+        <div className={`nav-item ${page==='empresas'||selectedEmpresa?'active':''}`} onClick={() => navTo('empresas')}>
+          {Icons.building}<span>Empresas</span>
+        </div>
+        <div className="sidebar-footer">
+          <div className="admin-name">{admin.nombre}</div>
+          <div style={{color:'var(--text3)',fontSize:'.7rem'}}>{admin.email}</div>
+          <span className="logout" onClick={logout}>Cerrar sesion</span>
+        </div>
+      </div>
+      <div className="main">{renderPage()}</div>
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

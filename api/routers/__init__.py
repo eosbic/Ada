@@ -15,6 +15,7 @@ from . import consolidation_router
 from . import admin_auth
 from . import admin_router
 from . import portal_router
+from . import admin_portal_router
 
 
 api_router = APIRouter()
@@ -120,4 +121,9 @@ api_router.include_router(
 api_router.include_router(
     portal_router.router,
     tags=["Portal"]
+)
+
+api_router.include_router(
+    admin_portal_router.router,
+    tags=["Admin Portal"]
 )

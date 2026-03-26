@@ -10,7 +10,7 @@ POST /resume/{thread_id}   → Reanudar grafo pausado (HITL)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
@@ -110,6 +110,47 @@ async def visual_report(report_id: str, db: AsyncSession = Depends(get_db)):
         "source_file": row.source_file,
     }
     return HTMLResponse(content=generate_visual_report(report_dict))
+
+
+@router.get("/reports/{report_id}/pdf")
+async def pdf_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """Genera y descarga PDF profesional de un reporte."""
+    from api.services.artifact_service import generate_professional_pdf
+    import os
+
+    result = await db.execute(
+        text("SELECT * FROM ada_reports WHERE id = :id"),
+        {"id": report_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+
+    report_data = {
+        "title": row.title,
+        "report_type": row.report_type,
+        "markdown_content": row.markdown_content,
+        "metrics_summary": row.metrics_summary,
+        "alerts": row.alerts,
+        "created_at": row.created_at,
+        "generated_by": row.generated_by,
+        "source_file": row.source_file,
+        "empresa_id": str(row.empresa_id),
+    }
+
+    pdf_result = generate_professional_pdf(report_data)
+    if not pdf_result.get("ok"):
+        raise HTTPException(status_code=500, detail=pdf_result.get("error", "Error generando PDF"))
+
+    file_path = pdf_result["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=500, detail="PDF generado pero archivo no encontrado")
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=pdf_result["file_name"],
+    )
 
 
 @router.get("/reports/{report_id}")
@@ -295,31 +336,3 @@ async def resume_workflow(thread_id: str, data: dict, db: AsyncSession = Depends
             "message": "Acción ejecutada.",
         }
 
-@router.get("/reports/{report_id}/visual")
-async def get_visual_report(report_id: str, db: AsyncSession = Depends(get_db)):
-    """Renderiza un reporte como HTML visual interactivo."""
-    from fastapi.responses import HTMLResponse
-    from api.services.visual_report_service import generate_visual_report
-
-    result = await db.execute(
-        text("SELECT * FROM ada_reports WHERE id = :id"),
-        {"id": report_id},
-    )
-    row = result.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-
-    report_data = {
-        "title": row.title,
-        "report_type": row.report_type,
-        "source_file": row.source_file,
-        "markdown_content": row.markdown_content,
-        "metrics_summary": row.metrics_summary,
-        "alerts": row.alerts,
-        "generated_by": row.generated_by,
-        "created_at": row.created_at,
-    }
-
-    html = generate_visual_report(report_data)
-    return HTMLResponse(content=html)

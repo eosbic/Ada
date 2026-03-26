@@ -310,6 +310,7 @@ async def run_agent(
         "empresa_id": empresa_id or "",
         "user_id": user_id or "",
         "intent": intent,
+        "source": source,
         "tool_context": tool_context.get("context_text", ""),
         "sources_used": tool_context.get("sources_used", []),
         "dual_repo_checked": tool_context.get("dual_repo_checked", True),

@@ -71,6 +71,7 @@ class ChatState(TypedDict, total=False):
     user_id: str
     intent: str
     model_preference: Optional[str]
+    source: str  # "telegram" | "portal" | "api"
 
     context: str
     memories: List[str]
@@ -223,6 +224,36 @@ async def _lookup_telegram_facts(empresa_id: str, message: str) -> tuple[str, di
     return answer, source
 
 
+def _list_available_reports(empresa_id: str, limit: int = 15) -> str:
+    """Lista los reportes mas recientes de la empresa para sugerirlos al usuario."""
+    try:
+        with sync_engine.connect() as conn:
+            rows = conn.execute(
+                sql_text("""
+                    SELECT title, report_type, source_file, created_at
+                    FROM ada_reports
+                    WHERE empresa_id = :eid AND is_archived = FALSE
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                """),
+                {"eid": empresa_id, "lim": limit}
+            ).fetchall()
+
+        if not rows:
+            return ""
+
+        lines = []
+        for r in rows:
+            date_str = str(r.created_at)[:10] if r.created_at else ""
+            source = f" (fuente: {r.source_file})" if r.source_file else ""
+            lines.append(f"- {r.title} [{r.report_type}] {date_str}{source}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"CHAT: Error en _list_available_reports: {e}")
+        return ""
+
+
 async def retrieve_context(state: ChatState) -> dict:
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
@@ -343,6 +374,24 @@ async def retrieve_context(state: ChatState) -> dict:
     tool_context = state.get("tool_context", "")
     if tool_context:
         context_chunks.append("## Tools Context\n" + tool_context)
+
+    # Si no se encontro contexto relevante, listar reportes disponibles
+    has_real_context = bool(memories or reports_sql or reports_qdrant or vector_docs or graph_context)
+    if not has_real_context and empresa_id:
+        try:
+            available_reports = _list_available_reports(empresa_id)
+            if available_reports:
+                context_chunks.append(
+                    "## INFORMES DISPONIBLES\n"
+                    "No se encontraron resultados directos para la consulta del usuario. "
+                    "Estos son los informes disponibles en la base de datos de la empresa. "
+                    "DEBES listar estos informes al usuario y preguntarle a cual se refiere "
+                    "o si quiere que busques en alguno de ellos. NO digas 'no tengo datos' sin antes "
+                    "mostrar lo que SI hay disponible.\n\n" + available_reports
+                )
+                sources_used.append({"name": "available_reports_fallback", "detail": "listado de informes", "confidence": 0.5})
+        except Exception as e:
+            print(f"CHAT: Error listando reportes disponibles: {e}")
 
     context = "\n\n".join(context_chunks) if context_chunks else "Sin contexto previo."
 
@@ -475,13 +524,14 @@ async def save_to_memory(state: ChatState) -> dict:
         store_memory(f"Ada: {response[:1800]}", empresa_id=empresa_id)
 
     # Persistir historial en PostgreSQL
+    source = state.get("source", "api")
     if empresa_id and user_id and message:
         try:
             history = get_history(empresa_id, user_id)
             if message:
-                history.append({"role": "user", "content": message})
+                history.append({"role": "user", "content": message, "source": source})
             if response:
-                history.append({"role": "assistant", "content": response[:2000]})
+                history.append({"role": "assistant", "content": response[:2000], "source": source})
             save_history(empresa_id, user_id, history)
         except Exception as e:
             print(f"CHAT: Error persistiendo historial: {e}")

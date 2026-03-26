@@ -152,3 +152,71 @@ async def update_team_member(user_id: str, data: dict, db: AsyncSession = Depend
     await db.commit()
 
     return {"status": "updated", "user_id": user_id, "role": role}
+
+
+# =========================
+# PREFERENCIAS DE USUARIO
+# =========================
+@router.get("/preferences")
+async def get_preferences(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Obtiene preferencias del usuario autenticado."""
+    user_id = current_user["user_id"]
+    result = await db.execute(
+        text("SELECT preferences FROM user_preferences WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    row = result.fetchone()
+    prefs = row.preferences if row and row.preferences else {}
+    # Defaults
+    defaults = {
+        "morning_brief_enabled": False,
+        "morning_brief_hour": 7,
+        "morning_brief_timezone": "America/Bogota",
+    }
+    merged = {**defaults, **(prefs if isinstance(prefs, dict) else {})}
+    return {"user_id": user_id, "preferences": merged}
+
+
+@router.put("/preferences")
+async def update_preferences(data: dict, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Actualiza preferencias del usuario autenticado (merge parcial)."""
+    import json as _json
+    user_id = current_user["user_id"]
+    new_prefs = data.get("preferences", {})
+    if not isinstance(new_prefs, dict):
+        raise HTTPException(status_code=400, detail="preferences debe ser un objeto JSON")
+
+    # Validar campos de morning brief si vienen
+    if "morning_brief_hour" in new_prefs:
+        h = new_prefs["morning_brief_hour"]
+        if not isinstance(h, int) or h < 0 or h > 23:
+            raise HTTPException(status_code=400, detail="morning_brief_hour debe ser entero 0-23")
+    if "morning_brief_timezone" in new_prefs:
+        tz = new_prefs["morning_brief_timezone"]
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(tz)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Timezone invalido: {tz}")
+
+    # UPSERT con merge de JSONB
+    await db.execute(
+        text("""
+            INSERT INTO user_preferences (user_id, preferences, updated_at)
+            VALUES (:uid, :prefs::jsonb, NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                preferences = user_preferences.preferences || :prefs::jsonb,
+                updated_at = NOW()
+        """),
+        {"uid": user_id, "prefs": _json.dumps(new_prefs, ensure_ascii=False)},
+    )
+    await db.commit()
+
+    # Re-read merged
+    result = await db.execute(
+        text("SELECT preferences FROM user_preferences WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    row = result.fetchone()
+    return {"status": "updated", "preferences": row.preferences if row else new_prefs}

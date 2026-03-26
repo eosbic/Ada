@@ -36,7 +36,8 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "prospecting" -> Perfilar un cliente o empresa NUEVA que Ada no conoce: "perfila a empresa X", "investiga a este prospecto". NO usar cuando preguntan sobre alguien que ya está en el sistema.
 - "team" -> Gestion de equipo interno (roles, permisos, miembros)
 - "action" -> Ejecutar accion concreta
-- "briefing" -> Briefing ejecutivo o resumen diario
+- "briefing" -> Briefing ejecutivo o resumen diario, "dame el brief de hoy"
+- "configure_brief" -> Activar, desactivar o cambiar hora del brief diario: "activa el brief a las 6am", "desactiva el brief", "cambia el brief a las 9", "envíame el brief todos los dias a las 7"
 - "conversational" -> Saludo, charla casual o pregunta general
 
 DIFERENCIA CLAVE:
@@ -81,6 +82,7 @@ INTENT_AGENT_MAP = {
     "action": "chat_agent",
     "conversational": "chat_agent",
     "briefing": "morning_brief_agent",
+    "configure_brief": "chat_agent",
 }
 
 

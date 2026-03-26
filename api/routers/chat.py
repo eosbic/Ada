@@ -9,9 +9,77 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text as sql_text
 from api.services.agent_runner import run_agent
 from api.dependencies import get_current_user
-from api.database import sync_engine
+from api.database import sync_engine, AsyncSessionLocal
 
 router = APIRouter()
+
+
+async def _handle_configure_brief(message: str, empresa_id: str, user_id: str) -> dict | None:
+    """Detecta y maneja comandos de configuracion del morning brief."""
+    msg = (message or "").lower().strip()
+
+    # Patrones de activacion
+    brief_keywords = [
+        "activa el brief", "activar brief", "activa brief", "activar el brief",
+        "envíame el brief", "enviame el brief", "quiero el brief",
+        "brief diario", "brief a las", "brief todos los dias", "brief todos los días",
+        "desactiva el brief", "desactivar brief", "desactiva brief",
+        "cancela el brief", "cancelar brief", "no quiero brief",
+        "cambia el brief", "cambiar hora del brief",
+    ]
+
+    if not any(k in msg for k in brief_keywords):
+        return None
+
+    # Detectar si es desactivar
+    disable_kw = ["desactiva", "cancelar", "cancela", "no quiero", "desactivar"]
+    if any(k in msg for k in disable_kw):
+        await _update_brief_pref(user_id, {"morning_brief_enabled": False})
+        return {
+            "response": "✅ Brief diario desactivado. Puedes reactivarlo cuando quieras diciendo *\"activa el brief a las 7am\"*.",
+            "intent": "configure_brief",
+            "model_used": "rule_brief_config",
+        }
+
+    # Detectar hora
+    import re as _re
+    hour_match = _re.search(r'(\d{1,2})\s*(?:am|:00|hrs?|horas?)?', msg)
+    hour = int(hour_match.group(1)) if hour_match else 7
+    if hour > 23:
+        hour = 7
+
+    await _update_brief_pref(user_id, {
+        "morning_brief_enabled": True,
+        "morning_brief_hour": hour,
+    })
+
+    return {
+        "response": f"✅ Brief diario activado a las **{hour}:00** (America/Bogota).\n\n"
+                    f"Cada mañana recibirás un resumen ejecutivo con tu agenda, emails pendientes y alertas.\n\n"
+                    f"Para cambiar la hora: *\"cambia el brief a las 9am\"*\n"
+                    f"Para desactivar: *\"desactiva el brief\"*",
+        "intent": "configure_brief",
+        "model_used": "rule_brief_config",
+    }
+
+
+async def _update_brief_pref(user_id: str, prefs: dict):
+    """Actualiza preferencias de brief en user_preferences."""
+    import json as _json
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text as _t
+            await db.execute(_t("""
+                INSERT INTO user_preferences (user_id, preferences, updated_at)
+                VALUES (:uid, :prefs::jsonb, NOW())
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    preferences = user_preferences.preferences || :prefs::jsonb,
+                    updated_at = NOW()
+            """), {"uid": user_id, "prefs": _json.dumps(prefs)})
+            await db.commit()
+    except Exception as e:
+        print(f"BRIEF CONFIG: Error actualizando preferencias: {e}")
 
 
 APPROVAL_WORDS = (
@@ -164,6 +232,11 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
         else:
             # Si escribe otra cosa, cancelar pendiente y procesar normal
             _clear_pending(empresa_id, user_id)
+
+    # ── Configure Brief: detección rápida antes del router ──
+    brief_result = await _handle_configure_brief(message, empresa_id, user_id)
+    if brief_result:
+        return brief_result
 
     # ── Flujo normal ──
     result = await run_agent(

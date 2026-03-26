@@ -2389,6 +2389,11 @@ function Settings({ theme, setTheme }) {
   const [perms, setPerms] = useState({});
   const [connections, setConnections] = useState({});
   const [customPrompt, setCustomPrompt] = useState('');
+  const [briefEnabled, setBriefEnabled] = useState(false);
+  const [briefHour, setBriefHour] = useState(7);
+  const [briefTz, setBriefTz] = useState('America/Bogota');
+  const [briefSaving, setBriefSaving] = useState(false);
+  const [briefMsg, setBriefMsg] = useState('');
 
   useEffect(()=>{
     const load = async ()=>{
@@ -2410,6 +2415,10 @@ function Settings({ theme, setTheme }) {
         const r2=await fetch(`https://backend-ada.duckdns.org/config/dna/${MOCK_USER.empresa_id}`,{headers:{'Authorization':'Bearer '+(MOCK_USER.token||'')}});
         if(r2.ok){const d2=await r2.json();setCustomPrompt(d2.custom_prompt||'');}
       }catch(e){}
+      try{
+        const r3=await fetch(`https://backend-ada.duckdns.org/usuarios/preferences`,{headers:{'Authorization':'Bearer '+(MOCK_USER.token||'')}});
+        if(r3.ok){const d3=await r3.json();const p=d3.preferences||{};setBriefEnabled(!!p.morning_brief_enabled);setBriefHour(p.morning_brief_hour||7);setBriefTz(p.morning_brief_timezone||'America/Bogota');}
+      }catch(e){}
     }; load();
   },[]);
 
@@ -2418,9 +2427,9 @@ function Settings({ theme, setTheme }) {
       <div className="page-header"><h2>Configuración</h2></div>
 
       <div className="settings-tabs">
-        {['empresa','usuarios','apariencia'].map(t=>(
+        {['empresa','brief','usuarios','apariencia'].map(t=>(
           <button key={t} className={`settings-tab ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
-            {t==='empresa'?'🏢 Empresa':t==='usuarios'?'👥 Usuarios':'🎨 Apariencia'}
+            {t==='empresa'?'🏢 Empresa':t==='brief'?'☀️ Brief Diario':t==='usuarios'?'👥 Usuarios':'🎨 Apariencia'}
           </button>
         ))}
       </div>
@@ -2505,6 +2514,60 @@ function Settings({ theme, setTheme }) {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {tab==='brief' && (
+        <div style={{maxWidth:'520px'}}>
+          <div className="card">
+            <div className="section-label">☀️ Morning Brief</div>
+            <p style={{fontSize:'14px',color:'var(--text-3)',marginBottom:'16px'}}>Recibe un resumen ejecutivo diario por Telegram con tu agenda, emails pendientes y alertas.</p>
+
+            <div className="perm-toggle" style={{padding:'12px 14px',marginBottom:'16px',cursor:'pointer'}} onClick={()=>setBriefEnabled(!briefEnabled)}>
+              <div className="perm-dot" style={{background:briefEnabled?'var(--green)':'var(--text-3)'}}/>
+              <div>
+                <div style={{fontWeight:'600',color:'var(--text-1)',fontSize:'15px'}}>{briefEnabled?'Activado':'Desactivado'}</div>
+                <div style={{fontSize:'12px',color:'var(--text-3)'}}>Ada te enviará un brief cada mañana a la hora configurada</div>
+              </div>
+            </div>
+
+            {briefEnabled && (
+              <div style={{display:'flex',gap:'12px',marginBottom:'16px'}}>
+                <div style={{flex:1}}>
+                  <label style={{display:'block',fontSize:'12px',color:'var(--text-3)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'0.04em'}}>Hora</label>
+                  <select value={briefHour} onChange={e=>setBriefHour(parseInt(e.target.value))} style={{width:'100%',padding:'8px 10px',background:'var(--bg-input)',border:'1px solid var(--border)',borderRadius:'var(--r-md)',color:'var(--text-1)',fontSize:'14px'}}>
+                    {[5,6,7,8,9,10].map(h=><option key={h} value={h}>{h}:00 AM</option>)}
+                  </select>
+                </div>
+                <div style={{flex:1}}>
+                  <label style={{display:'block',fontSize:'12px',color:'var(--text-3)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'0.04em'}}>Zona horaria</label>
+                  <select value={briefTz} onChange={e=>setBriefTz(e.target.value)} style={{width:'100%',padding:'8px 10px',background:'var(--bg-input)',border:'1px solid var(--border)',borderRadius:'var(--r-md)',color:'var(--text-1)',fontSize:'14px'}}>
+                    {['America/Bogota','America/Mexico_City','America/Lima','America/Santiago','America/Buenos_Aires','America/Sao_Paulo','America/New_York','America/Los_Angeles','Europe/Madrid'].map(tz=><option key={tz} value={tz}>{tz.split('/')[1].replace('_',' ')}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <button disabled={briefSaving} style={{padding:'8px 20px',background:'var(--accent)',color:'var(--bg-base)',border:'none',borderRadius:'var(--r-md)',fontWeight:'600',fontSize:'14px',cursor:'pointer'}} onClick={async()=>{
+              setBriefSaving(true); setBriefMsg('');
+              try{
+                const r=await fetch('https://backend-ada.duckdns.org/usuarios/preferences',{method:'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},body:JSON.stringify({preferences:{morning_brief_enabled:briefEnabled,morning_brief_hour:briefHour,morning_brief_timezone:briefTz}})});
+                if(r.ok){setBriefMsg('✅ Preferencias guardadas');}else{const d=await r.json();setBriefMsg('❌ '+(d.detail||'Error'));}
+              }catch(e){setBriefMsg('❌ Error de conexión');}
+              setBriefSaving(false);
+            }}>{briefSaving?'Guardando...':'Guardar'}</button>
+            {briefMsg && <div style={{marginTop:'8px',fontSize:'13px',color:briefMsg.startsWith('✅')?'var(--green)':'var(--red)'}}>{briefMsg}</div>}
+          </div>
+
+          <div className="card" style={{marginTop:'14px'}}>
+            <div className="section-label">💡 Tips</div>
+            <p style={{fontSize:'13px',color:'var(--text-3)',lineHeight:'1.6'}}>
+              También puedes configurar el brief por Telegram:<br/>
+              • <em>"Activa el brief a las 6am"</em><br/>
+              • <em>"Desactiva el brief"</em><br/>
+              • <em>"Dame el brief de hoy"</em> (on-demand)
+            </p>
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
 """
-Image Agent - pipeline de vision + etiquetado semantico + vector store.
+Image Agent - classify -> vision -> tags -> store.
+Clasificación automática + prompts especializados por tipo de imagen.
 """
 
 import json
@@ -9,6 +10,8 @@ from langgraph.graph import StateGraph, END
 from api.services.semantic_tagger import semantic_tag_document
 from api.services.memory_service import store_image_report
 from api.services.dna_loader import load_company_dna
+from api.services.image_protocols import build_image_prompt, infer_type_from_instruction
+from api.services.industry_protocols import get_protocol
 
 
 class ImageState(TypedDict, total=False):
@@ -21,6 +24,7 @@ class ImageState(TypedDict, total=False):
     model_preference: Optional[str]
 
     # pipeline
+    image_type: str
     visual_analysis: str
     semantic_tags: Dict
 
@@ -52,6 +56,54 @@ def parse_image(state: ImageState) -> dict:
     return {"mime_type": mime_type}
 
 
+def classify_image(state: ImageState) -> dict:
+    """Clasifica la imagen: primero por instrucción, luego por visión Gemini."""
+    import os
+
+    instruction = state.get("user_instruction", "")
+
+    # 1) Inferir desde la instrucción del usuario
+    inferred = infer_type_from_instruction(instruction)
+    if inferred:
+        print(f"IMAGE AGENT: tipo inferido de instrucción -> {inferred}")
+        return {"image_type": inferred}
+
+    # 2) Si no hay instrucción clara, clasificar con Gemini (llamada mínima)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {"image_type": "general"}
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+
+        file_bytes = state.get("file_bytes", b"")
+        mime_type = state.get("mime_type", "image/jpeg")
+
+        resp = model.generate_content(
+            [
+                "Clasifica esta imagen en UNA de estas categorías: "
+                "documento_fisico | grafica_metricas | pieza_marketing | "
+                "persona_equipo | producto | captura_pantalla | general\n"
+                "Responde SOLO con la categoría, nada más.",
+                {"mime_type": mime_type, "data": file_bytes},
+            ]
+        )
+        raw = (getattr(resp, "text", "") or "").strip().lower().replace(" ", "_")
+        valid_types = {
+            "documento_fisico", "grafica_metricas", "pieza_marketing",
+            "persona_equipo", "producto", "captura_pantalla", "general",
+        }
+        image_type = raw if raw in valid_types else "general"
+        print(f"IMAGE AGENT: tipo clasificado por Gemini -> {image_type}")
+        return {"image_type": image_type}
+
+    except Exception as e:
+        print(f"IMAGE AGENT classify error: {e}")
+        return {"image_type": "general"}
+
+
 def analyze_image_with_vision(state: ImageState) -> dict:
     import os
 
@@ -59,6 +111,7 @@ def analyze_image_with_vision(state: ImageState) -> dict:
     file_name = state.get("file_name", "image")
     mime_type = state.get("mime_type", "image/jpeg")
     instruction = state.get("user_instruction", "") or "Analiza la imagen con foco de negocio."
+    image_type = state.get("image_type", "general")
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -75,20 +128,23 @@ def analyze_image_with_vision(state: ImageState) -> dict:
         model = genai.GenerativeModel("gemini-2.0-flash")
 
         empresa_id = state.get("empresa_id", "")
+        industry_type = "generic"
         custom_prompt = ""
+        kpis_sector = ""
         if empresa_id:
             dna = load_company_dna(empresa_id)
+            industry_type = dna.get("industry_type", "generic") or "generic"
             custom_prompt = dna.get("custom_prompt", "")
+            kpis_sector = ", ".join(get_protocol(industry_type).get("kpis", []))
 
-        prompt = (
-            "Eres analista senior de documentos visuales. "
-            "Entrega respuesta en formato BLUF, luego evidencia visual, luego acciones. "
-            "No inventes datos que no aparezcan en la imagen.\n\n"
-            f"Instruccion del usuario: {instruction}\n"
-            f"Archivo: {file_name}"
+        prompt = build_image_prompt(
+            image_type=image_type,
+            industry_type=industry_type,
+            custom_prompt=custom_prompt,
+            user_instruction=instruction,
+            file_name=file_name,
+            kpis_sector=kpis_sector,
         )
-        if custom_prompt:
-            prompt += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
 
         resp = model.generate_content(
             [
@@ -124,6 +180,7 @@ def build_semantic_tags(state: ImageState) -> dict:
     tags = semantic_tag_document(analysis, file_name)
     tags["categoria"] = tags.get("categoria") or "imagen"
     tags["tipo_doc"] = "imagen"
+    tags["image_type"] = state.get("image_type", "general")
     return {"semantic_tags": tags}
 
 
@@ -136,9 +193,15 @@ def store_image_analysis(state: ImageState) -> dict:
     response = state.get("response", "")
     model_used = state.get("model_used", "unknown")
     tags = state.get("semantic_tags", {})
+    user_instruction = state.get("user_instruction", "")
 
     if not empresa_id or not response:
         return {}
+
+    if user_instruction and len(user_instruction) > 5:
+        title = user_instruction[:50]
+    else:
+        title = f"Análisis visual: {file_name}"
 
     try:
         with sync_engine.connect() as conn:
@@ -156,7 +219,7 @@ def store_image_analysis(state: ImageState) -> dict:
                 ),
                 {
                     "empresa_id": empresa_id,
-                    "title": f"Analisis visual: {file_name}",
+                    "title": title,
                     "source_file": file_name,
                     "markdown": response,
                     "metrics": json.dumps(tags, ensure_ascii=False),
@@ -184,12 +247,14 @@ def store_image_analysis(state: ImageState) -> dict:
 
 graph = StateGraph(ImageState)
 graph.add_node("parse", parse_image)
+graph.add_node("classify", classify_image)
 graph.add_node("vision", analyze_image_with_vision)
 graph.add_node("tags", build_semantic_tags)
 graph.add_node("store", store_image_analysis)
 
 graph.set_entry_point("parse")
-graph.add_edge("parse", "vision")
+graph.add_edge("parse", "classify")
+graph.add_edge("classify", "vision")
 graph.add_edge("vision", "tags")
 graph.add_edge("tags", "store")
 graph.add_edge("store", END)

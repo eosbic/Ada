@@ -32,6 +32,27 @@ MD_NOTE_DIR = os.getenv("TELEGRAM_MD_DIR", _DEFAULT_MD_DIR)
 INGEST_ONLY_MEMORY_CANDIDATES = os.getenv("TELEGRAM_INGEST_ONLY_MEMORY_CANDIDATES", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 _PENDING_LINK = set()
+_PENDING_IMAGES = {}  # telegram_id -> {"bytes": bytes, "user_data": dict, "timestamp": float}
+
+IMAGE_MENU_OPTIONS = {
+    "1": "Analizar documento / factura / contrato",
+    "2": "Interpretar gráfica o métricas",
+    "3": "Evaluar como pieza de marketing",
+    "4": "Etiquetar persona o equipo",
+    "5": "Describir producto",
+    "6": "Análisis general",
+}
+
+IMAGE_MENU_TEXT = (
+    "¿Qué quieres que haga con esta imagen?\n\n"
+    "1️⃣ Analizar documento / factura / contrato\n"
+    "2️⃣ Interpretar gráfica o métricas\n"
+    "3️⃣ Evaluar como pieza de marketing\n"
+    "4️⃣ Etiquetar persona o equipo\n"
+    "5️⃣ Describir producto\n"
+    "6️⃣ Análisis general\n\n"
+    "Responde con el número o escribe tu propia instrucción."
+)
 
 
 def _slugify(text: str, max_len: int = 48) -> str:
@@ -212,6 +233,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if telegram_id in _PENDING_LINK:
         await _handle_link_email(update, telegram_id, message.strip())
         return
+
+    # Verificar si hay imagen pendiente esperando instrucción
+    import time
+    if telegram_id in _PENDING_IMAGES:
+        pending = _PENDING_IMAGES[telegram_id]
+        elapsed = time.time() - pending["timestamp"]
+        if elapsed < 300:  # 5 minutos
+            instruction = IMAGE_MENU_OPTIONS.get(message.strip(), message.strip())
+            del _PENDING_IMAGES[telegram_id]
+            await _send_file_to_upload(update, pending["user_data"], "telegram_photo.jpg", pending["bytes"], instruction)
+            return
+        else:
+            del _PENDING_IMAGES[telegram_id]
 
     user_data = await _get_user_data(telegram_id)
     if not user_data:
@@ -422,6 +456,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import time
+
     telegram_id = str(update.effective_user.id)
     user_data = await _get_user_data(telegram_id)
     if not user_data:
@@ -434,9 +470,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
     f = await photo.get_file()
     img_bytes = bytes(await f.download_as_bytearray())
-    instruction = update.message.caption or "Analiza esta imagen"
+    instruction = (update.message.caption or "").strip()
 
-    await _send_file_to_upload(update, user_data, "telegram_photo.jpg", img_bytes, instruction)
+    if instruction:
+        # Con caption: procesar directamente
+        await _send_file_to_upload(update, user_data, "telegram_photo.jpg", img_bytes, instruction)
+    else:
+        # Sin caption: guardar imagen y mostrar menú
+        _PENDING_IMAGES[telegram_id] = {
+            "bytes": img_bytes,
+            "user_data": user_data,
+            "timestamp": time.time(),
+        }
+        await update.message.reply_text(IMAGE_MENU_TEXT)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):

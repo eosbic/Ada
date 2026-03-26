@@ -31,6 +31,7 @@ class ExcelState(TypedDict, total=False):
     response: str
     alerts: List[Dict]
     model_used: str
+    report_id: Optional[str]
 
 
 def parse_file(state: ExcelState) -> dict:

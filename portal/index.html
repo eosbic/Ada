@@ -1887,6 +1887,7 @@ function ReportDetail({ reportId, onBack, onNav }) {
           </div>
         )}
         <div style={{marginLeft:'auto',display:'flex',gap:'6px'}}>
+          <button className="btn btn-ghost btn-sm" onClick={()=>{window.open('/api/v1/reports/'+report.id+'/visual','_blank')}}>📊 Visual</button>
           <button className="btn btn-ghost btn-sm">📋 Copiar</button>
           <button className="btn btn-ghost btn-sm">📥 PDF</button>
         </div>

@@ -407,6 +407,7 @@ async def _send_file_to_upload(update: Update, user_data: dict, file_name: str, 
     processing_msg = await update.message.reply_text(f"Analizando {file_name}...")
 
     try:
+        token = user_data.get("access_token", "")
         async with httpx.AsyncClient(timeout=TIMEOUT_UPLOAD) as client:
             resp = await client.post(
                 f"{API_URL}/files/upload",
@@ -416,6 +417,7 @@ async def _send_file_to_upload(update: Update, user_data: dict, file_name: str, 
                     "instruction": instruction or "Analisis general",
                     "industry_type": "generic",
                 },
+                headers={"Authorization": f"Bearer {token}"},
             )
 
         data = resp.json()

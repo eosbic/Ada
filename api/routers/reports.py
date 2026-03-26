@@ -267,3 +267,32 @@ async def resume_workflow(thread_id: str, data: dict, db: AsyncSession = Depends
             "payload_override": payload_override,
             "message": "Acción ejecutada.",
         }
+
+@router.get("/reports/{report_id}/visual")
+async def get_visual_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """Renderiza un reporte como HTML visual interactivo."""
+    from fastapi.responses import HTMLResponse
+    from api.services.visual_report_service import generate_visual_report
+
+    result = await db.execute(
+        text("SELECT * FROM ada_reports WHERE id = :id"),
+        {"id": report_id},
+    )
+    row = result.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+
+    report_data = {
+        "title": row.title,
+        "report_type": row.report_type,
+        "source_file": row.source_file,
+        "markdown_content": row.markdown_content,
+        "metrics_summary": row.metrics_summary,
+        "alerts": row.alerts,
+        "generated_by": row.generated_by,
+        "created_at": row.created_at,
+    }
+
+    html = generate_visual_report(report_data)
+    return HTMLResponse(content=html)

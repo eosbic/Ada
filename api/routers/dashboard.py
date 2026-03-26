@@ -26,7 +26,7 @@ async def get_dashboard(empresa_id: UUID, db: AsyncSession = Depends(get_db)):
         text("""
             SELECT company_name, industry_type, business_description, 
                    city, country, currency, num_employees, company_size,
-                   ada_custom_name, ada_personality, admin_interests,
+                   ada_custom_name, ada_personality, admin_interests, custom_prompt,
                    main_products, main_services
             FROM ada_company_profile WHERE empresa_id = :eid
         """),
@@ -47,6 +47,7 @@ async def get_dashboard(empresa_id: UUID, db: AsyncSession = Depends(get_db)):
             "company_size": profile.company_size,
             "ada_custom_name": profile.ada_custom_name,
             "ada_personality": profile.ada_personality,
+            "custom_prompt": getattr(profile, "custom_prompt", "") or "",
             "admin_interests": profile.admin_interests,
             "main_products": profile.main_products,
             "main_services": profile.main_services,

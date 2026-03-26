@@ -240,7 +240,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending = _PENDING_IMAGES[telegram_id]
         elapsed = time.time() - pending["timestamp"]
         if elapsed < 300:  # 5 minutos
-            instruction = IMAGE_MENU_OPTIONS.get(message.strip(), message.strip())
+            # Si estamos esperando info de persona (segundo nivel de opción 4)
+            if pending.get("awaiting_person_info"):
+                instruction = f"Etiquetar persona: {message.strip()}. Incluye nombre, cargo, área en el knowledge graph y en los metadatos del reporte."
+                del _PENDING_IMAGES[telegram_id]
+                await _send_file_to_upload(update, pending["user_data"], "telegram_photo.jpg", pending["bytes"], instruction)
+                return
+            # Primer nivel: selección del menú
+            choice = message.strip()
+            if choice == "4":
+                # Opción 4: pedir nombre y cargo antes de procesar
+                pending["awaiting_person_info"] = True
+                pending["timestamp"] = time.time()
+                await update.message.reply_text("¿Cuál es el nombre completo de esta persona y su cargo o área?\n(Ej: Carlos Satizabal, Director de Educación)")
+                return
+            instruction = IMAGE_MENU_OPTIONS.get(choice, choice)
             del _PENDING_IMAGES[telegram_id]
             await _send_file_to_upload(update, pending["user_data"], "telegram_photo.jpg", pending["bytes"], instruction)
             return

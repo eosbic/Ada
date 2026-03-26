@@ -149,6 +149,88 @@ async def get_dashboard(empresa_id: UUID, db: AsyncSession = Depends(get_db)):
     conn_rows = result.fetchall()
     connections = {row.provider: row.is_active for row in conn_rows}
 
+    # 9. Metricas del ultimo excel_analysis
+    result = await db.execute(
+        text("""
+            SELECT metrics_summary, created_at FROM ada_reports
+            WHERE empresa_id = :eid AND report_type = 'excel_analysis'
+              AND is_archived = FALSE AND metrics_summary IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+        """),
+        {"eid": eid}
+    )
+    last_metrics_row = result.fetchone()
+    last_metrics = {}
+    last_report_date = None
+    if last_metrics_row:
+        ms = last_metrics_row.metrics_summary
+        last_metrics = ms if isinstance(ms, dict) else {}
+        last_report_date = last_metrics_row.created_at
+
+    # 10. Dias desde ultimo reporte (cualquier tipo)
+    days_since_last = None
+    if recent_rows:
+        from datetime import datetime, timezone
+        last_dt = recent_rows[0].created_at
+        if last_dt:
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days_since_last = (now - last_dt).days
+
+    # 11. Resumen de alertas por severidad
+    alert_summary = {"critical": 0, "warning": 0, "info": 0}
+    for a in alerts:
+        lvl = a.get("level", "info")
+        if lvl in alert_summary:
+            alert_summary[lvl] += 1
+
+    # 12. Top entidades mencionadas (tags de reportes)
+    top_entities = []
+    try:
+        result = await db.execute(
+            text("""
+                SELECT entity_name, entity_type, COUNT(*) as mentions
+                FROM report_links
+                WHERE report_id IN (
+                    SELECT id FROM ada_reports WHERE empresa_id = :eid AND is_archived = FALSE
+                )
+                AND entity_name IS NOT NULL
+                GROUP BY entity_name, entity_type
+                ORDER BY mentions DESC
+                LIMIT 8
+            """),
+            {"eid": eid}
+        )
+        entity_rows = result.fetchall()
+        top_entities = [
+            {"name": r.entity_name, "type": r.entity_type or "otro", "mentions": r.mentions}
+            for r in entity_rows
+        ]
+    except Exception:
+        # report_links puede no tener entity_name — fallback a tags
+        try:
+            result = await db.execute(
+                text("""
+                    SELECT tag, COUNT(*) as cnt
+                    FROM (
+                        SELECT jsonb_array_elements_text(
+                            CASE WHEN jsonb_typeof(metrics_summary->'semantic_tags') = 'array'
+                                 THEN metrics_summary->'semantic_tags'
+                                 ELSE '[]'::jsonb END
+                        ) as tag
+                        FROM ada_reports
+                        WHERE empresa_id = :eid AND is_archived = FALSE
+                    ) sub
+                    GROUP BY tag ORDER BY cnt DESC LIMIT 8
+                """),
+                {"eid": eid}
+            )
+            tag_rows = result.fetchall()
+            top_entities = [{"name": r.tag, "type": "tag", "mentions": r.cnt} for r in tag_rows]
+        except Exception:
+            pass
+
     return {
         "company": company_data,
         "kpis": {
@@ -158,8 +240,12 @@ async def get_dashboard(empresa_id: UUID, db: AsyncSession = Depends(get_db)):
             "team_count": team_count,
         },
         "alerts": alerts[:10],
+        "alert_summary": alert_summary,
         "approvals": approvals,
         "recent_reports": recent_reports,
         "budget": budget,
         "connections": connections,
+        "last_metrics": last_metrics,
+        "days_since_last": days_since_last,
+        "top_entities": top_entities,
     }

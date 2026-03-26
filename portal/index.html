@@ -1320,6 +1320,9 @@ function TokenSidebar() {
 function Dashboard({ onNav }) {
   const [dash, setDash] = useState(null);
   const [loading, setLoading] = useState(true);
+  const chartRef = useRef(null);
+  const chartInst = useRef(null);
+
   useEffect(()=>{
     const load = async ()=>{
       try{
@@ -1329,44 +1332,172 @@ function Dashboard({ onNav }) {
       setLoading(false);
     }; load();
   },[]);
-  const co = dash?.company||{};
-  const kpis = dash?.kpis||{};
-  const alerts = dash?.alerts||[];
-  const approvals = dash?.approvals||[];
-  const recent = dash?.recent_reports||[];
-  const budget = dash?.budget||{limit:100,used:0};
-  const budgetPct = budget.limit>0?Math.round((budget.used/budget.limit)*100):0;
+
+  // Chart.js para metricas
+  useEffect(()=>{
+    if(!dash?.last_metrics||!chartRef.current) return;
+    const m=dash.last_metrics;
+    const numeric=Object.entries(m).filter(([k,v])=>typeof v==='number'&&!k.startsWith('_'));
+    if(numeric.length<2) return;
+    const items=numeric.slice(0,10);
+    if(chartInst.current) chartInst.current.destroy();
+    const isDark=document.documentElement.getAttribute('data-theme')!=='standard';
+    chartInst.current=new Chart(chartRef.current.getContext('2d'),{
+      type:'bar',
+      data:{labels:items.map(([k])=>k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()).slice(0,22)),
+        datasets:[{label:'Valor',data:items.map(([,v])=>v),
+          backgroundColor:isDark?'rgba(0,229,255,0.5)':'rgba(37,99,235,0.6)',
+          borderColor:isDark?'#00e5ff':'#2563eb',borderWidth:1,borderRadius:4}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,grid:{color:isDark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.08)'},ticks:{color:isDark?'#7eafc9':'#666',callback:v=>v.toLocaleString('es-CO')}},
+          x:{grid:{display:false},ticks:{color:isDark?'#7eafc9':'#666',maxRotation:35,autoSkip:false,font:{size:9}}}}}
+    });
+    return ()=>{if(chartInst.current) chartInst.current.destroy();};
+  },[dash]);
+
+  const co=dash?.company||{};
+  const kpis=dash?.kpis||{};
+  const alerts=dash?.alerts||[];
+  const alertSum=dash?.alert_summary||{critical:0,warning:0,info:0};
+  const approvals=dash?.approvals||[];
+  const recent=dash?.recent_reports||[];
+  const budget=dash?.budget||{limit:100,used:0};
+  const budgetPct=budget.limit>0?Math.round((budget.used/budget.limit)*100):0;
+  const lastMetrics=dash?.last_metrics||{};
+  const daysSince=dash?.days_since_last;
+  const entities=dash?.top_entities||[];
+
+  // Ventas totales del ultimo informe
+  const ventasTotal=Object.entries(lastMetrics).find(([k])=>/(venta|ingreso|revenue).*total/i.test(k));
+  const ventasVal=ventasTotal?ventasTotal[1]:null;
+
+  // Fecha relativa
+  const timeAgo=(dateStr)=>{
+    if(!dateStr) return '';
+    const d=new Date(dateStr); const now=new Date(); const diff=Math.floor((now-d)/1000);
+    if(diff<60) return 'hace un momento'; if(diff<3600) return `hace ${Math.floor(diff/60)} min`;
+    if(diff<86400) return `hace ${Math.floor(diff/3600)}h`; if(diff<604800) return `hace ${Math.floor(diff/86400)}d`;
+    return dateStr.slice(0,10);
+  };
+
   return (
     <div>
       <div className="page-header">
         <h2>Dashboard Ejecutivo</h2>
-        <p>Buenos días, {MOCK_USER.name||"usuario"} — {new Date().toLocaleDateString("es-CO",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
+        <p>Buenos dias, {MOCK_USER.name||"usuario"} — {new Date().toLocaleDateString("es-CO",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
       </div>
-      {loading?<div style={{textAlign:"center",padding:"40px",color:"var(--text-3)"}}>⏳ Cargando dashboard...</div>:(<>
+      {loading?<div style={{textAlign:"center",padding:"40px",color:"var(--text-3)"}}>Cargando dashboard...</div>:(<>
+
+      {/* KPI Cards */}
       <div className="kpi-grid">
-        {[{label:"Reportes",value:kpis.reports_count||0,sub:kpis.reports_count>0?`${kpis.reports_count} generados`:"Sube un Excel",icon:"📊",color:"c-cyan"},{label:"Alertas",value:alerts.length,sub:alerts.length>0?`${alerts.length} activas`:"Sin alertas",icon:"⚠️",color:"c-orange"},{label:"Aprobaciones",value:approvals.length,sub:approvals.length>0?"Pendientes":"Sin pendientes",icon:"✅",color:"c-purple"},{label:"Equipo",value:kpis.team_count||0,sub:kpis.team_count>0?`${kpis.team_count} miembros`:"Configura equipo",icon:"👥",color:"c-green"}].map((k,i)=>(
-          <div key={i} className={`kpi-card ${k.color}`}><div className="kpi-icon">{k.icon}</div><div className="kpi-lbl">{k.label}</div><div className="kpi-val">{k.value}</div><div className="kpi-sub">{k.sub}</div></div>
-        ))}
-      </div>
-      <div onClick={()=>onNav("brief")} style={{cursor:"pointer",margin:"0 0 14px",padding:"16px 20px",background:"linear-gradient(135deg,rgba(0,229,255,0.08),rgba(124,58,237,0.08))",border:"1px solid rgba(0,229,255,0.25)",borderRadius:"var(--r-lg)",display:"flex",alignItems:"center",gap:"16px"}}>
-        <div style={{width:"44px",height:"44px",borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),var(--accent2))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px",flexShrink:0}}>🌅</div>
-        <div style={{flex:1}}><div style={{fontFamily:"var(--font-hud)",fontSize:"13px",letterSpacing:"2px",color:"var(--accent)",marginBottom:"4px"}}>RESUMEN DIARIO · {co.ada_custom_name||"ADA"}</div><div style={{fontSize:"15px",color:"var(--text-1)",fontWeight:"500"}}>Buenos días {MOCK_USER.name||"usuario"} — pregúntale a {co.ada_custom_name||"Ada"} por tus alertas y pendientes.</div></div>
-        <div style={{fontFamily:"var(--font-hud)",fontSize:"11px",letterSpacing:"2px",color:"var(--accent)",border:"1px solid var(--accent)",padding:"4px 10px",borderRadius:"4px",flexShrink:0}}>VER BRIEF →</div>
-      </div>
-      <div className="dash-grid">
-        <div className="card">
-          <div className="section-label">⚠️ Alertas Activas</div>
-          <div className="alerts-list">
-            {alerts.length===0&&<div style={{padding:"20px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sin alertas activas</div>}
-            {alerts.slice(0,5).map((a,i)=>(<div key={i} className={`alert-item ${a.level}`}><div className="alert-icon">{a.level==="critical"?"🔴":a.level==="warning"?"⚠️":"📊"}</div><div><div className="alert-text">{a.msg}</div><div className="alert-meta">{a.source} · {a.created_at}</div></div></div>))}
+        <div className="kpi-card c-cyan">
+          <div className="kpi-icon">{ventasVal?'💰':'📊'}</div>
+          <div className="kpi-lbl">{ventasVal?'Ventas (ultimo informe)':'Reportes'}</div>
+          <div className="kpi-val">{ventasVal?'$'+Number(ventasVal).toLocaleString('es-CO'):(kpis.reports_count||0)}</div>
+          <div className="kpi-sub">{daysSince!=null?(daysSince===0?'Hoy':`hace ${daysSince} dia${daysSince!==1?'s':''}`):''}</div>
+        </div>
+        <div className="kpi-card c-orange" style={alertSum.critical>0?{borderColor:'var(--red)',boxShadow:'0 0 12px rgba(255,61,90,0.15)'}:{}}>
+          <div className="kpi-icon">⚠️</div>
+          <div className="kpi-lbl">Alertas activas</div>
+          <div className="kpi-val" style={alertSum.critical>0?{color:'var(--red)'}:{}}>{alerts.length}</div>
+          <div className="kpi-sub">
+            {alertSum.critical>0&&<span style={{color:'var(--red)',fontWeight:600}}>{alertSum.critical} criticas</span>}
+            {alertSum.critical>0&&alertSum.warning>0&&' · '}
+            {alertSum.warning>0&&<span style={{color:'var(--orange)'}}>{alertSum.warning} alertas</span>}
+            {alerts.length===0&&'Sin alertas'}
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
-          <div className="card" style={{cursor:"pointer"}} onClick={()=>onNav("approvals")}>
-            <div className="section-label">✅ Aprobaciones Pendientes <span className="badge" style={{marginLeft:"6px"}}>{approvals.length}</span></div>
-            {approvals.length===0&&<div style={{padding:"12px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sin aprobaciones pendientes</div>}
-            {approvals.map(a=>(<div key={a.id} className="approval-item"><div className="approval-icon">{a.type==="email_draft"?"✉️":"📋"}</div><div className="approval-info"><div className="approval-title">{a.title}</div><div className="approval-sub">{a.created_at}</div></div></div>))}
+        <div className="kpi-card c-purple">
+          <div className="kpi-icon">📊</div>
+          <div className="kpi-lbl">Total reportes</div>
+          <div className="kpi-val">{kpis.reports_count||0}</div>
+          <div className="kpi-sub">{kpis.reports_count>0?'en boveda':'Sube un Excel'}</div>
+        </div>
+        <div className="kpi-card c-green">
+          <div className="kpi-icon">👥</div>
+          <div className="kpi-lbl">Equipo</div>
+          <div className="kpi-val">{kpis.team_count||0}</div>
+          <div className="kpi-sub">{kpis.team_count>0?`${kpis.team_count} miembros`:'Configura equipo'}</div>
+        </div>
+      </div>
+
+      {/* Brief banner */}
+      <div onClick={()=>onNav("brief")} style={{cursor:"pointer",margin:"0 0 14px",padding:"16px 20px",background:"linear-gradient(135deg,rgba(0,229,255,0.08),rgba(124,58,237,0.08))",border:"1px solid rgba(0,229,255,0.25)",borderRadius:"var(--r-lg)",display:"flex",alignItems:"center",gap:"16px"}}>
+        <div style={{width:"44px",height:"44px",borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),var(--accent2))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px",flexShrink:0}}>🌅</div>
+        <div style={{flex:1}}><div style={{fontFamily:"var(--font-hud)",fontSize:"13px",letterSpacing:"2px",color:"var(--accent)",marginBottom:"4px"}}>RESUMEN DIARIO</div><div style={{fontSize:"15px",color:"var(--text-1)",fontWeight:"500"}}>Preguntale a {co.ada_custom_name||"Ada"} por tus alertas y pendientes</div></div>
+        <div style={{fontFamily:"var(--font-hud)",fontSize:"11px",letterSpacing:"2px",color:"var(--accent)",border:"1px solid var(--accent)",padding:"4px 10px",borderRadius:"4px",flexShrink:0}}>VER BRIEF</div>
+      </div>
+
+      {/* Row: Alerts + Chart */}
+      <div className="dash-grid">
+        <div className="card">
+          <div className="section-label">⚠️ Alertas que requieren atencion</div>
+          <div className="alerts-list">
+            {alerts.length===0&&<div style={{padding:"20px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sin alertas activas</div>}
+            {alerts.slice(0,8).map((a,i)=>(
+              <div key={i} className={`alert-item ${a.level}`} style={{borderLeft:a.level==='critical'?'3px solid var(--red)':a.level==='warning'?'3px solid var(--orange)':'3px solid var(--accent)',paddingLeft:'12px'}}>
+                <div className="alert-icon" style={{fontSize:'16px'}}>{a.level==="critical"?"🔴":a.level==="warning"?"🟠":"🔵"}</div>
+                <div style={{flex:1}}>
+                  <div className="alert-text">{a.msg}</div>
+                  <div className="alert-meta">{a.source} · {timeAgo(a.created_at)}</div>
+                </div>
+              </div>
+            ))}
           </div>
+        </div>
+
+        <div className="card">
+          <div className="section-label">📊 Metricas del ultimo informe</div>
+          {Object.keys(lastMetrics).length<2?(
+            <div style={{padding:"30px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sube un Excel para ver metricas aqui</div>
+          ):(
+            <div style={{position:"relative",height:"240px"}}><canvas ref={chartRef}/></div>
+          )}
+        </div>
+      </div>
+
+      {/* Row: Recent Reports + Entities + Budget */}
+      <div className="sep"/>
+      <div className="dash-grid">
+        <div className="card">
+          <div className="section-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>📁 Ultimos Reportes<span onClick={()=>onNav("vault")} style={{cursor:"pointer",color:"var(--accent)",fontSize:"11px",textTransform:"uppercase",letterSpacing:"1px",fontFamily:"var(--font-hud)"}}>Ver todos</span></div>
+          {recent.length===0&&<div style={{padding:"20px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sin reportes. Sube un Excel para empezar.</div>}
+          {recent.map(r=>(
+            <div key={r.id} className="report-card" style={{padding:"10px 12px"}} onClick={()=>onNav("report",r.id)}>
+              <div className="report-type-icon">{r.type==="excel_analysis"?"📊":r.type==="proactive_briefing"?"🌅":r.type==="document_analysis"?"📄":"📋"}</div>
+              <div className="report-info">
+                <div className="report-title">{r.title}</div>
+                <div className="report-meta">
+                  <span>{timeAgo(r.created_at)}</span>
+                  <span className="badge" style={{fontSize:'10px',padding:'1px 6px'}}>{r.type.replace(/_/g,' ')}</span>
+                  {r.alerts_count>0&&<span style={{color:"var(--yellow)"}}>{r.alerts_count} alertas</span>}
+                </div>
+              </div>
+              <div style={{marginLeft:'auto',display:'flex',gap:'4px'}}>
+                <span onClick={e=>{e.stopPropagation();window.open('/api/v1/reports/'+r.id+'/visual','_blank');}} style={{cursor:'pointer',fontSize:'16px'}} title="Visual">📊</span>
+                <span onClick={e=>{e.stopPropagation();window.open('/api/v1/reports/'+r.id+'/pdf','_blank');}} style={{cursor:'pointer',fontSize:'16px'}} title="PDF">📥</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+          {/* Top Entities */}
+          {entities.length>0&&(
+            <div className="card">
+              <div className="section-label">🏷️ Entidades mas mencionadas</div>
+              {entities.slice(0,6).map((e,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:'8px',padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                  <span style={{fontSize:'14px'}}>{e.type==='persona'||e.type==='person'?'👤':e.type==='empresa'||e.type==='company'?'🏢':e.type==='producto'||e.type==='product'?'📦':'🏷️'}</span>
+                  <span style={{flex:1,fontSize:'13px',color:'var(--text-1)',fontWeight:500}}>{e.name}</span>
+                  <span style={{fontSize:'11px',color:'var(--text-3)',fontFamily:'var(--font-mono)'}}>{e.mentions}x</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Budget */}
           <div className="card">
             <div className="section-label">🔋 Presupuesto Mensual</div>
             <div style={{fontFamily:"var(--font-hud)",fontSize:"22px",fontWeight:"700",color:"var(--text-1)"}}>{budgetPct}%</div>
@@ -1374,19 +1505,14 @@ function Dashboard({ onNav }) {
             <div className="budget-bar"><div className="budget-bar-fill" style={{width:`${budgetPct}%`}}/></div>
             <div className="budget-labels"><span>0</span><span>${budget.limit.toLocaleString()}</span></div>
           </div>
-        </div>
-      </div>
-      <div className="sep"/>
-      <div className="dash-grid">
-        <div className="card">
-          <div className="section-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>📁 Últimos Reportes<span onClick={()=>onNav("vault")} style={{cursor:"pointer",color:"var(--accent)",fontSize:"11px",textTransform:"uppercase",letterSpacing:"1px",fontFamily:"var(--font-hud)"}}>Ver todos →</span></div>
-          {recent.length===0&&<div style={{padding:"20px",textAlign:"center",color:"var(--text-3)",fontSize:"14px"}}>Sin reportes. Sube un Excel para empezar.</div>}
-          {recent.map(r=>(<div key={r.id} className="report-card" style={{padding:"10px 12px"}} onClick={()=>onNav("report",r.id)}><div className="report-type-icon">{r.type==="excel_analysis"?"📊":"📋"}</div><div className="report-info"><div className="report-title">{r.title}</div><div className="report-meta"><span>{r.created_at}</span><span>{r.model}</span><span style={{color:r.alerts_count>0?"var(--yellow)":"var(--green)"}}>{r.alerts_count>0?`${r.alerts_count} alertas`:"Sin alertas"}</span></div></div></div>))}
-        </div>
-        <div className="token-usage-card">
-          <div className="section-label">⚡ Uso de Tokens — Hoy</div>
-          {Object.entries(TOKEN_DATA).map(([key,d])=>{const pct=Math.min(100,(d.total/d.max)*100);return(<div key={key} className="token-model-row"><div className="token-model-name">{d.label.split(" ")[0]}</div><div className="token-model-bar"><div className={`token-model-fill token-${key}`} style={{width:`${pct}%`}}/></div><div className="token-model-count">{fmtTokens(d.total)}</div><div className="token-model-cost">${d.cost.toFixed(2)}</div></div>);})}
-          <div style={{marginTop:"8px"}}><button className="btn btn-ghost btn-sm" style={{width:"100%",justifyContent:"center"}} onClick={()=>onNav("tokens")}>Ver Monitor Completo →</button></div>
+
+          {/* Approvals */}
+          {approvals.length>0&&(
+            <div className="card" style={{cursor:"pointer"}} onClick={()=>onNav("approvals")}>
+              <div className="section-label">✅ Aprobaciones <span className="badge" style={{marginLeft:"6px"}}>{approvals.length}</span></div>
+              {approvals.slice(0,3).map(a=>(<div key={a.id} className="approval-item"><div className="approval-icon">{a.type==="email_draft"?"✉️":"📋"}</div><div className="approval-info"><div className="approval-title">{a.title}</div><div className="approval-sub">{timeAgo(a.created_at)}</div></div></div>))}
+            </div>
+          )}
         </div>
       </div>
       </>)}

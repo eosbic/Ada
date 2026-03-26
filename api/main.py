@@ -1,6 +1,8 @@
 import os
 import time
+import logging
 from collections import defaultdict
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +18,16 @@ from api.workers.drive_worker import drive_worker_loop
 from api.workers.morning_brief_worker import morning_brief_worker_loop
 from api.workers.alert_worker import alert_worker_loop
 from api.services.memory_service import init_qdrant
+
+
+# ── Logging estructurado ──────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("ada")
 
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
@@ -51,7 +63,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = FastAPI(title="Ada V5.0")
+# ── Lifespan (reemplaza @app.on_event deprecated) ────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup & shutdown de la aplicación."""
+    logger.info("Ada V5.0 iniciando...")
+    init_qdrant()
+    asyncio.create_task(worker_loop())
+    asyncio.create_task(drive_worker_loop())
+    asyncio.create_task(morning_brief_worker_loop())
+    asyncio.create_task(alert_worker_loop())
+    logger.info("Workers iniciados correctamente")
+    yield
+    logger.info("Ada V5.0 apagándose...")
+
+
+app = FastAPI(title="Ada V5.0", lifespan=lifespan)
 
 app.add_middleware(RateLimitMiddleware)
 
@@ -62,15 +89,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    init_qdrant()
-    asyncio.create_task(worker_loop())
-    asyncio.create_task(drive_worker_loop())
-    asyncio.create_task(morning_brief_worker_loop())
-    asyncio.create_task(alert_worker_loop())
 
 
 @app.get("/health")

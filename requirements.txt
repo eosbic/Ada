@@ -1,33 +1,36 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 asyncpg>=0.29
-python-dotenv>=1.0
-pydantic>=2.6
-asyncpg
 sqlalchemy[asyncio]
+pydantic>=2.6
 pydantic[email]
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt==4.0.1
-openai>=1.0.0
 python-multipart
+python-dotenv>=1.0
+# LLM / AI
+openai>=1.0.0
 langgraph
 langchain
 langchain-google-genai
-google-generativeai
-python-dotenv
-qdrant-client
-qdrant-client
 langchain-anthropic
 langchain-community
+google-generativeai
+google-genai
+# Vector DB
+qdrant-client
+# Data
 pandas
 openpyxl
-nest_asyncio
+# Google APIs
 google-auth
 google-auth-oauthlib
 google-api-python-client
+# Telegram
 python-telegram-bot
-google-genai
+# Misc
+nest_asyncio
 elevenlabs
 pg8000
 psycopg2-binary

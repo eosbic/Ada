@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import engine, get_db
-from api.security import verify_password, create_access_token
+from api.security import (
+    verify_password, create_access_token, create_refresh_token, decode_token
+)
 
 router = APIRouter()
 
@@ -11,6 +13,10 @@ router = APIRouter()
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 @router.post("/login")
@@ -33,12 +39,40 @@ async def login(data: LoginRequest):
         if not verify_password(data.password, user.password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        token = create_access_token({
+        payload = {
             "user_id": str(user.id),
             "empresa_id": str(user.empresa_id)
-        })
+        }
+        access_token = create_access_token(payload)
+        refresh_token = create_refresh_token(payload)
 
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/refresh")
+async def refresh_access_token(data: RefreshRequest):
+    """Renueva el access_token usando un refresh_token válido."""
+    token_data = decode_token(data.refresh_token)
+
+    if token_data.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    payload = {
+        "user_id": token_data["user_id"],
+        "empresa_id": token_data["empresa_id"],
+    }
+    new_access = create_access_token(payload)
+    new_refresh = create_refresh_token(payload)
+
+    return {
+        "access_token": new_access,
+        "refresh_token": new_refresh,
+        "token_type": "bearer",
+    }
 
 
 @router.get("/telegram/{telegram_id}")

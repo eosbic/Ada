@@ -14,6 +14,7 @@ from . import budget_router
 from . import consolidation_router
 from . import admin_auth
 from . import admin_router
+from . import portal_router
 
 
 api_router = APIRouter()
@@ -55,17 +56,17 @@ api_router.include_router(
 
 
 api_router.include_router(
-    workflows.router, 
+    workflows.router,
     prefix="/workflows",
     tags=["Workflows"]
-    )
+)
 
 
 api_router.include_router(
-    chat.router, 
-    prefix="/chat", 
+    chat.router,
+    prefix="/chat",
     tags=["Chat"]
-    )
+)
 
 api_router.include_router(
     upload.router,
@@ -114,4 +115,9 @@ api_router.include_router(
     admin_router.router,
     prefix="/admin/api",
     tags=["Admin"]
+)
+
+api_router.include_router(
+    portal_router.router,
+    tags=["Portal"]
 )

@@ -11,6 +11,8 @@ from langgraph.graph import StateGraph, END
 from models.selector import selector
 from api.services.memory_service import store_memory, store_report, store_vector_knowledge
 from api.services.semantic_tagger import semantic_tag_document
+from api.services.industry_protocols import build_sector_prompt
+from api.services.dna_loader import load_company_dna
 
 
 class ExcelState(TypedDict, total=False):
@@ -153,6 +155,14 @@ def analyze_with_llm(state: ExcelState) -> dict:
     model, model_name = selector.get_model("excel_analysis", state.get("model_preference"))
     instruction = state.get("user_instruction") or "Análisis general completo"
     industry = state.get("industry_type", "generic")
+    empresa_id = state.get("empresa_id", "")
+    custom_prompt = ""
+    if empresa_id:
+        dna = load_company_dna(empresa_id)
+        custom_prompt = dna.get("custom_prompt", "")
+        if not industry or industry == "generic":
+            industry = dna.get("industry_type", "generic") or "generic"
+    sector_prompt = build_sector_prompt(industry)
     calcs_str = json.dumps(state.get("calculations", {}), ensure_ascii=False, default=str)[:8000]
     profile_str = json.dumps(state.get("statistical_profile", {}), ensure_ascii=False, default=str)[:3000]
     sample_str = json.dumps(state.get("sample", [])[:50], ensure_ascii=False, default=str)[:8000]
@@ -200,9 +210,14 @@ SECCIONES OBLIGATORIAS — incluir TODAS si los datos las respaldan. No esperes 
 - Si se reduce mora a N días, se liberan $Z en flujo de caja
 
 No omitas ninguna sección. El CEO necesita ver el panorama COMPLETO en la primera respuesta, no descubrirlo preguntando.
+
+{sector_prompt}
 """
+    system_msg = "Eres un analista de negocios senior con 15 años de experiencia. Respondes en español."
+    if custom_prompt:
+        system_msg += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
     response = model.invoke([
-        {"role": "system", "content": "Eres un analista de negocios senior con 15 años de experiencia. Respondes en español."},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": prompt},
     ])
     print(f"EXCEL: Análisis generado con {model_name}")

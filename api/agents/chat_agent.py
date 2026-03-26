@@ -422,8 +422,12 @@ async def generate_response(state: ChatState) -> dict:
                     parts.append(f"Voz de marca: {dna['brand_voice']}")
                 if parts:
                     company_dna_summary = ". ".join(parts)
+                custom_prompt = dna.get("custom_prompt", "")
         except Exception as e:
             print(f"CHAT: Error cargando DNA: {e}")
+            custom_prompt = ""
+    else:
+        custom_prompt = ""
 
     model, model_name = selector.get_model("chat", state.get("model_preference"))
 
@@ -433,6 +437,8 @@ async def generate_response(state: ChatState) -> dict:
         company_dna_summary=company_dna_summary,
         context=context,
     )
+    if custom_prompt:
+        system += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
     if personalized:
         system = personalized + "\n\n" + system
 

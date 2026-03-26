@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, END
 
 from api.services.semantic_tagger import semantic_tag_document
 from api.services.memory_service import store_image_report
+from api.services.dna_loader import load_company_dna
 
 
 class ImageState(TypedDict, total=False):
@@ -73,6 +74,12 @@ def analyze_image_with_vision(state: ImageState) -> dict:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.0-flash")
 
+        empresa_id = state.get("empresa_id", "")
+        custom_prompt = ""
+        if empresa_id:
+            dna = load_company_dna(empresa_id)
+            custom_prompt = dna.get("custom_prompt", "")
+
         prompt = (
             "Eres analista senior de documentos visuales. "
             "Entrega respuesta en formato BLUF, luego evidencia visual, luego acciones. "
@@ -80,6 +87,8 @@ def analyze_image_with_vision(state: ImageState) -> dict:
             f"Instruccion del usuario: {instruction}\n"
             f"Archivo: {file_name}"
         )
+        if custom_prompt:
+            prompt += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
 
         resp = model.generate_content(
             [

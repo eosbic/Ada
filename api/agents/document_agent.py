@@ -10,6 +10,8 @@ from models.selector import selector
 from api.services.document_parser import parse_document
 from api.services.memory_service import store_memory, store_report, store_vector_knowledge
 from api.services.semantic_tagger import semantic_tag_document
+from api.services.industry_protocols import build_sector_prompt
+from api.services.dna_loader import load_company_dna
 
 
 class DocState(TypedDict, total=False):
@@ -78,6 +80,15 @@ def analyze_doc(state: DocState) -> dict:
 
     model, model_name = selector.get_model("document_analysis", state.get("model_preference"))
 
+    empresa_id = state.get("empresa_id", "")
+    industry = "generic"
+    custom_prompt = ""
+    if empresa_id:
+        dna = load_company_dna(empresa_id)
+        industry = dna.get("industry_type", "generic") or "generic"
+        custom_prompt = dna.get("custom_prompt", "")
+    sector_prompt = build_sector_prompt(industry)
+
     prompt = f"""Analiza este documento.
 
 METADATA:
@@ -97,10 +108,15 @@ Reglas:
 3) Recomendaciones accionables
 4) Citar fuente [{file_name}]
 5) Al final indicar Fuente primaria y secundaria
+
+{sector_prompt}
 """
 
+    system_msg = "Eres analista documental senior. Responde en espanol."
+    if custom_prompt:
+        system_msg += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
     response = model.invoke([
-        {"role": "system", "content": "Eres analista documental senior. Responde en espanol."},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": prompt},
     ])
 

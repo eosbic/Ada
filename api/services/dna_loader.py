@@ -81,6 +81,7 @@ def load_company_dna(empresa_id: str) -> dict:
             "pm_tool": getattr(row, "pm_tool", None) or "",
             "extra_apps": _safe_json(getattr(row, "extra_apps", None), []),
             "onboarding_complete": getattr(row, "onboarding_complete", None) or False,
+            "custom_prompt": getattr(row, "custom_prompt", None) or "",
         }
 
         print(f"DNA_LOADER: OK {dna['company_name']}")
@@ -111,7 +112,7 @@ def update_dna_field(empresa_id: str, field: str, value) -> bool:
         "success_cases", "website_url", "website_summary", "social_urls",
         "social_analysis", "logo_url", "brand_colors", "agent_configs",
         "productivity_suite", "pm_tool", "extra_apps", "onboarding_complete",
-        "main_competitors",
+        "main_competitors", "custom_prompt",
     ]
     if field not in ALLOWED_FIELDS:
         return False

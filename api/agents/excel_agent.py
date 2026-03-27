@@ -32,6 +32,7 @@ class ExcelState(TypedDict, total=False):
     alerts: List[Dict]
     model_used: str
     report_id: Optional[str]
+    chart_specs: Optional[List[Dict]]
 
 
 def parse_file(state: ExcelState) -> dict:
@@ -213,6 +214,27 @@ SECCIONES OBLIGATORIAS — incluir TODAS si los datos las respaldan. No esperes 
 No omitas ninguna sección. El CEO necesita ver el panorama COMPLETO en la primera respuesta, no descubrirlo preguntando.
 
 {sector_prompt}
+
+VISUALIZACIONES REQUERIDAS:
+Al final de tu análisis, incluye un bloque JSON con las visualizaciones recomendadas.
+El bloque debe estar entre las etiquetas <!--CHARTS_JSON y CHARTS_JSON-->
+
+Reglas para las visualizaciones:
+- Solo agrupa métricas que sean comparables entre sí (misma unidad, mismo contexto)
+- NUNCA mezcles pesos ($) con porcentajes (%) o con conteos (#) en el mismo gráfico
+- Cada gráfico debe contar una historia clara para el CEO
+- Máximo 5 gráficos, cada uno con máximo 8 items
+- Tipos: "bar" (barras verticales para comparar categorías), "horizontalBar" (ranking de mayor a menor), "doughnut" (distribución/proporciones en %), "line" (tendencia temporal)
+- Incluye "unit" para claridad: "COP", "%", "#", "dias"
+
+Ejemplo de formato:
+<!--CHARTS_JSON
+[
+  {{"title": "Ventas por producto", "type": "bar", "labels": ["Producto A", "Producto B"], "values": [1050000, 840000], "unit": "COP"}},
+  {{"title": "Distribución por método", "type": "doughnut", "labels": ["PSE", "Tarjeta"], "values": [55, 45], "unit": "%"}},
+  {{"title": "Top vendedores", "type": "horizontalBar", "labels": ["Ana", "Carlos"], "values": [930000, 798000], "unit": "COP"}}
+]
+CHARTS_JSON-->
 """
     system_msg = "Eres un analista de negocios senior con 15 años de experiencia. Respondes en español."
     if custom_prompt:
@@ -223,6 +245,49 @@ No omitas ninguna sección. El CEO necesita ver el panorama COMPLETO en la prime
     ])
     print(f"EXCEL: Análisis generado con {model_name}")
     return {"response": response.content, "model_used": model_name}
+
+
+def extract_charts(state: ExcelState) -> dict:
+    """Extrae chart_specs del bloque <!--CHARTS_JSON ... CHARTS_JSON--> y limpia el markdown."""
+    import re as _re
+    response = state.get("response", "")
+    if not response:
+        return {}
+
+    pattern = _re.compile(r"<!--CHARTS_JSON\s*(.*?)\s*CHARTS_JSON-->", _re.DOTALL)
+    match = pattern.search(response)
+
+    if not match:
+        return {}
+
+    raw_json = match.group(1).strip()
+    chart_specs = []
+    try:
+        parsed = json.loads(raw_json)
+        if isinstance(parsed, list):
+            for spec in parsed:
+                if isinstance(spec, dict) and "labels" in spec and "values" in spec:
+                    chart_specs.append({
+                        "title": spec.get("title", "Grafico"),
+                        "type": spec.get("type", "bar"),
+                        "labels": spec["labels"],
+                        "values": spec["values"],
+                        "unit": spec.get("unit", ""),
+                        "id": _re.sub(r"\W+", "_", spec.get("title", "chart").lower())[:25],
+                    })
+        print(f"EXCEL: {len(chart_specs)} chart specs extraídos del LLM")
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"EXCEL: Error parseando CHARTS_JSON: {e}")
+
+    # Remover el bloque del markdown visible
+    clean_response = pattern.sub("", response).strip()
+
+    result = {}
+    if chart_specs:
+        result["chart_specs"] = chart_specs
+    if clean_response != response:
+        result["response"] = clean_response
+    return result
 
 
 def generate_alerts(state: ExcelState) -> dict:
@@ -262,6 +327,11 @@ def store_analysis(state: ExcelState) -> dict:
             elif isinstance(stats, dict):
                 metrics_summary[f"{col}_total"] = stats.get("total", 0)
                 metrics_summary[f"{col}_promedio"] = stats.get("promedio", 0)
+    # Guardar chart_specs del LLM en metrics_summary
+    chart_specs = state.get("chart_specs")
+    if chart_specs:
+        metrics_summary["_chart_specs"] = chart_specs
+
     title = f"Análisis {'Retail' if industry_type == 'retail' else 'General'}: {file_name}"
     alerts_json = [{"level": a.get("level", "info"), "message": a.get("message", "")} for a in alerts]
     report_id = None
@@ -386,6 +456,7 @@ graph.add_node("calculate", calculate_metrics)
 graph.add_node("profile", build_profile)
 graph.add_node("sample", smart_sampling)
 graph.add_node("analyze", analyze_with_llm)
+graph.add_node("extract_charts", extract_charts)
 graph.add_node("alerts", generate_alerts)
 graph.add_node("store", store_analysis)
 graph.add_node("briefing", trigger_briefing)
@@ -395,7 +466,8 @@ graph.add_edge("parse", "calculate")
 graph.add_edge("calculate", "profile")
 graph.add_edge("profile", "sample")
 graph.add_edge("sample", "analyze")
-graph.add_edge("analyze", "alerts")
+graph.add_edge("analyze", "extract_charts")
+graph.add_edge("extract_charts", "alerts")
 graph.add_edge("alerts", "store")
 graph.add_edge("store", "briefing")
 graph.add_edge("briefing", END)

@@ -187,6 +187,63 @@ def generate_pie_chart(
     return filepath
 
 
+def generate_doughnut_chart(
+    labels: list[str],
+    values: list[float],
+    title: str = "Indicadores",
+    figsize: tuple = (7, 4.5),
+    light_mode: bool = False,
+) -> Optional[str]:
+    """Genera grafico de dona PNG para porcentajes. Retorna path o None."""
+    if not labels or not values or len(labels) != len(values):
+        return None
+
+    if light_mode:
+        _apply_light_style()
+        text_color = LIGHT_TEXT
+        edge_color = LIGHT_BG
+        palette = COLORS_LIGHT
+    else:
+        _apply_dark_style()
+        text_color = DARK_TEXT
+        edge_color = DARK_BG
+        palette = COLORS_BAR
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=150)
+    colors = [palette[i % len(palette)] for i in range(len(labels))]
+
+    total = sum(abs(v) for v in values)
+    if total == 0:
+        plt.close(fig)
+        return None
+
+    wedges, texts, autotexts = ax.pie(
+        [abs(v) for v in values],
+        labels=None,
+        colors=colors,
+        autopct=lambda p: f"{p:.1f}%" if p > 4 else "",
+        startangle=90,
+        pctdistance=0.78,
+        wedgeprops={"edgecolor": edge_color, "linewidth": 2, "width": 0.45},
+    )
+    for t in autotexts:
+        t.set_fontsize(8)
+        t.set_color(text_color)
+
+    legend_labels = [f"{l[:28]} ({v:,.1f}%)" for l, v in zip(labels, values)]
+    ax.legend(wedges, legend_labels, loc="center left", bbox_to_anchor=(1, 0.5),
+              fontsize=8, frameon=False, labelcolor=text_color)
+
+    ax.set_title(title, fontsize=12, fontweight="bold", color=text_color, pad=12)
+    fig.tight_layout()
+
+    filename = f"donut_{uuid.uuid4().hex[:10]}.png"
+    filepath = str(CHART_DIR / filename)
+    fig.savefig(filepath, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return filepath
+
+
 def generate_charts_from_metrics(metrics: dict, markdown: str = "", light_mode: bool = False) -> list[str]:
     """Genera todos los graficos posibles desde metrics_summary. Retorna lista de paths PNG."""
     from api.services.visual_report_service import _extract_chart_data
@@ -203,7 +260,9 @@ def generate_charts_from_metrics(metrics: dict, markdown: str = "", light_mode: 
         if len(labels) < 2:
             continue
 
-        if chart_type == "horizontalBar":
+        if chart_type == "doughnut":
+            path = generate_doughnut_chart(labels, values, title, light_mode=light_mode)
+        elif chart_type == "horizontalBar":
             path = generate_bar_chart(labels, values, title, horizontal=True, light_mode=light_mode)
         else:
             path = generate_bar_chart(labels, values, title, horizontal=False, light_mode=light_mode)

@@ -259,13 +259,82 @@ def _build_charts(metrics: dict, markdown: str, styles: dict) -> tuple[list, lis
     return f, paths
 
 
+def _parse_md_table(lines: list[str], start_idx: int) -> tuple[list, int]:
+    """
+    Parsea una tabla markdown a partir de start_idx.
+    Retorna (flowable Table o None, indice donde termina la tabla).
+    """
+    if start_idx + 2 >= len(lines):
+        return None, start_idx
+
+    header_line = lines[start_idx].strip()
+    sep_line = lines[start_idx + 1].strip() if start_idx + 1 < len(lines) else ""
+
+    # Verificar que es separador de tabla (|---|---|)
+    if not re.match(r"^\|[\s\-:|]+\|$", sep_line):
+        return None, start_idx
+
+    headers = [h.strip() for h in header_line.split("|") if h.strip()]
+    if len(headers) < 2:
+        return None, start_idx
+
+    # Leer filas de datos
+    data_rows = []
+    idx = start_idx + 2
+    while idx < len(lines):
+        row_line = lines[idx].strip()
+        if not row_line.startswith("|"):
+            break
+        cells = [c.strip() for c in row_line.split("|") if c.strip()]
+        if cells:
+            # Pad o truncar al numero de headers
+            while len(cells) < len(headers):
+                cells.append("")
+            data_rows.append(cells[:len(headers)])
+        idx += 1
+
+    if not data_rows:
+        return None, start_idx
+
+    # Estilos de celdas
+    hdr_style = ParagraphStyle("_th", fontName="Helvetica-Bold", fontSize=8,
+                                textColor=C_BLACK, leading=10)
+    cell_style = ParagraphStyle("_td", fontName="Helvetica", fontSize=8,
+                                 textColor=C_DARK, leading=10)
+
+    # Construir tabla
+    table_data = [[Paragraph(escape(re.sub(r"[*`]", "", h)), hdr_style) for h in headers]]
+    for row in data_rows[:30]:
+        table_data.append([Paragraph(escape(re.sub(r"[*`]", "", c)), cell_style) for c in row])
+
+    ncols = len(headers)
+    col_width = min(6.5 * inch / ncols, 2.5 * inch)
+    t = Table(table_data, colWidths=[col_width] * ncols, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), HexColor("#e5e5e0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), C_BLACK),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.5, C_BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+
+    return t, idx
+
+
 def _build_content(markdown: str, styles: dict) -> list:
-    """Convierte markdown a flowables de ReportLab."""
+    """Convierte markdown a flowables de ReportLab, incluyendo tablas."""
     if not markdown:
         return []
     f = [Paragraph("Analisis detallado", styles["h2"])]
     lines = re.sub(r"\n{3,}", "\n\n", (markdown or "").strip()).split("\n")
     buf = []
+    i = 0
 
     def flush():
         if buf:
@@ -277,8 +346,20 @@ def _build_content(markdown: str, styles: dict) -> list:
             f.append(Paragraph(block, styles["body"]))
             buf.clear()
 
-    for line in lines:
-        s = line.strip()
+    while i < len(lines):
+        s = lines[i].strip()
+
+        # Detectar inicio de tabla markdown
+        if s.startswith("|") and i + 1 < len(lines) and re.match(r"^\|[\s\-:|]+\|$", lines[i + 1].strip()):
+            flush()
+            table_flowable, new_idx = _parse_md_table(lines, i)
+            if table_flowable:
+                f.append(Spacer(1, 6))
+                f.append(table_flowable)
+                f.append(Spacer(1, 8))
+                i = new_idx
+                continue
+
         if not s:
             flush()
             f.append(Spacer(1, 4))
@@ -297,6 +378,7 @@ def _build_content(markdown: str, styles: dict) -> list:
             flush(); f.append(Paragraph(escape(s), styles["body"]))
         else:
             buf.append(s)
+        i += 1
     flush()
     return f
 

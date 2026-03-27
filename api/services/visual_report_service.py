@@ -149,45 +149,123 @@ def _extract_tables_from_markdown(content: str) -> list[dict]:
     return charts
 
 
+_FINANCIAL_KW = ("total", "venta", "ingreso", "abono", "saldo", "iva", "subtotal",
+                 "utilidad", "costo", "gasto", "precio", "valor", "factur", "revenue", "cost")
+_PERCENT_KW = ("margen", "variacion", "pct", "porcentaje", "descuento", "percent", "ratio")
+_COUNT_KW = ("cantidad", "count", "registros", "transacciones", "clientes", "productos",
+             "items", "unidades", "numero", "num_")
+MAX_BARS = 8
+
+
+def _classify_metric(key: str) -> str:
+    """Clasifica una metrica en: financial, percent, count, other."""
+    k = key.lower()
+    if any(w in k for w in _PERCENT_KW):
+        return "percent"
+    if any(w in k for w in _FINANCIAL_KW):
+        return "financial"
+    if any(w in k for w in _COUNT_KW):
+        return "count"
+    return "other"
+
+
 def _extract_chart_data(metrics, markdown_content=""):
     """
     Retorna una LISTA de charts desde metrics_summary y markdown.
-    Cada chart: {id, title, labels, values, type: 'bar'|'horizontalBar'}
+    PRIORIDAD: Si el LLM genero _chart_specs, usarlos directamente.
+    FALLBACK: Agrupacion por keywords para reportes viejos sin _chart_specs.
+    Cada chart: {id, title, labels, values, type: 'bar'|'horizontalBar'|'doughnut'|'line'}
     """
     charts: list[dict] = []
     metrics = metrics or {}
 
-    # Agrupar metricas por sufijo
-    col_totals: dict[str, float] = {}
-    col_promedios: dict[str, float] = {}
-    standalone: dict[str, float] = {}
-    for key, val in metrics.items():
-        if not isinstance(val, (int, float)) or key.startswith("_"):
-            continue
-        if key.endswith("_total"):
-            col_totals[key[:-len("_total")]] = float(val)
-        elif key.endswith("_promedio"):
-            col_promedios[key[:-len("_promedio")]] = float(val)
-        else:
-            standalone[key] = float(val)
+    # PRIORIDAD: Usar chart_specs del LLM si existen
+    llm_specs = metrics.get("_chart_specs")
+    if isinstance(llm_specs, list) and len(llm_specs) > 0:
+        for spec in llm_specs:
+            if isinstance(spec, dict) and spec.get("labels") and spec.get("values"):
+                charts.append({
+                    "id": spec.get("id", re.sub(r"\W+", "_", spec.get("title", "chart").lower())[:25]),
+                    "title": spec.get("title", "Grafico"),
+                    "labels": spec["labels"][:MAX_BARS],
+                    "values": spec["values"][:MAX_BARS],
+                    "type": spec.get("type", "bar"),
+                    "unit": spec.get("unit", ""),
+                })
+        if charts:
+            # Tambien agregar rankings/tablas del markdown
+            for r in _extract_rankings_from_markdown(markdown_content):
+                charts.append(r)
+            return charts
 
-    if len(col_totals) >= 2:
+    # FALLBACK: Agrupacion por keywords (reportes sin _chart_specs)
+    # Clasificar todas las metricas numericas
+    groups: dict[str, dict[str, float]] = {
+        "financial": {}, "percent": {}, "count": {}, "other": {}
+    }
+    rankings: dict[str, dict[str, float]] = {}
+
+    for key, val in metrics.items():
+        if key.startswith("_"):
+            continue
+        # Dicts son rankings (vendedores, clientes, etc.)
+        if isinstance(val, dict):
+            numeric_items = {k: float(v) for k, v in val.items() if isinstance(v, (int, float))}
+            if len(numeric_items) >= 2:
+                rankings[key] = numeric_items
+            continue
+        if not isinstance(val, (int, float)):
+            continue
+        cat = _classify_metric(key)
+        groups[cat][key] = float(val)
+
+    # Grafico 1 — Financieros (barras)
+    fin = groups["financial"]
+    if len(fin) >= 2:
+        items = list(fin.items())[:MAX_BARS]
         charts.append({
-            "id": "totales", "title": "Totales por categoria",
-            "labels": [_format_metric_label(k) for k in col_totals],
-            "values": list(col_totals.values()), "type": "bar",
+            "id": "financieros", "title": "Metricas financieras",
+            "labels": [_format_metric_label(k) for k, _ in items],
+            "values": [v for _, v in items], "type": "bar",
         })
-    if len(col_promedios) >= 2:
+
+    # Grafico 2 — Porcentajes (doughnut)
+    pct = groups["percent"]
+    if len(pct) >= 2:
+        items = list(pct.items())[:MAX_BARS]
         charts.append({
-            "id": "promedios", "title": "Promedios por categoria",
-            "labels": [_format_metric_label(k) for k in col_promedios],
-            "values": list(col_promedios.values()), "type": "bar",
+            "id": "porcentajes", "title": "Indicadores porcentuales",
+            "labels": [_format_metric_label(k) for k, _ in items],
+            "values": [abs(v) for _, v in items], "type": "doughnut",
         })
-    if len(standalone) >= 2:
+
+    # Grafico 3 — Conteos (barras)
+    cnt = groups["count"]
+    if len(cnt) >= 2:
+        items = list(cnt.items())[:MAX_BARS]
+        charts.append({
+            "id": "conteos", "title": "Conteos y cantidades",
+            "labels": [_format_metric_label(k) for k, _ in items],
+            "values": [v for _, v in items], "type": "bar",
+        })
+
+    # Grafico 4 — Rankings (barras horizontales)
+    for rank_key, rank_data in rankings.items():
+        items = sorted(rank_data.items(), key=lambda x: x[1], reverse=True)[:MAX_BARS]
+        chart_id = re.sub(r"\W+", "_", rank_key.lower())[:25]
+        charts.append({
+            "id": f"rank_{chart_id}", "title": _format_metric_label(rank_key),
+            "labels": [_format_metric_label(k) for k, _ in items],
+            "values": [v for _, v in items], "type": "horizontalBar",
+        })
+
+    # "other" solo si no hay nada mas de metricas y tiene 2+
+    if not fin and not pct and not cnt and len(groups["other"]) >= 2:
+        items = list(groups["other"].items())[:MAX_BARS]
         charts.append({
             "id": "metricas", "title": "Metricas clave",
-            "labels": [_format_metric_label(k) for k in standalone],
-            "values": list(standalone.values()), "type": "bar",
+            "labels": [_format_metric_label(k) for k, _ in items],
+            "values": [v for _, v in items], "type": "bar",
         })
 
     # Rankings y tablas del markdown
@@ -268,46 +346,73 @@ def _render_chart(metrics, markdown_content=""):
         title = chart.get("title", f"Grafico {i + 1}")
         labels_json = json.dumps(chart.get("labels", []), ensure_ascii=False)
         values_json = json.dumps(chart.get("values", []))
-        is_horizontal = chart.get("type") == "horizontalBar"
+        chart_type = chart.get("type", "bar")
+        is_horizontal = chart_type == "horizontalBar"
+        is_doughnut = chart_type == "doughnut"
         num_items = len(chart.get("labels", []))
 
-        # Altura dinamica
-        if is_horizontal:
+        if is_doughnut:
+            chart_height = 300
+        elif is_horizontal:
             chart_height = max(250, num_items * 38 + 80)
         else:
             chart_height = max(280, num_items * 30 + 100)
 
-        axis_config = "indexAxis: 'y'," if is_horizontal else ""
-        bg_dark = green_dark if is_horizontal else dark_colors
-        bg_light = green_light if is_horizontal else light_colors
-        value_axis = "x" if is_horizontal else "y"
-        label_axis = "y" if is_horizontal else "x"
+        if is_doughnut:
+            blocks.append(
+                '<div class="section">'
+                '<h2 class="section-title">' + title + '</h2>'
+                '<div class="chart-container" style="height:' + str(chart_height) + 'px">'
+                '<canvas id="' + canvas_id + '"></canvas></div></div>'
+                '<script>'
+                'document.addEventListener("DOMContentLoaded", function() {'
+                '  var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;'
+                '  new Chart(document.getElementById("' + canvas_id + '").getContext("2d"), {'
+                '    type: "doughnut",'
+                '    data: { labels: ' + labels_json + ', datasets: [{ data: ' + values_json + ','
+                '      backgroundColor: isDark ? ' + dark_colors + ' : ' + light_colors + ','
+                '      borderColor: isDark ? "#0c1220" : "#ffffff", borderWidth: 2 }] },'
+                '    options: { responsive: true, maintainAspectRatio: false, cutout: "55%",'
+                '      plugins: { legend: { position: "right", labels: { color: isDark ? "#9c9a92" : "#73726c", font: { size: 11 }, padding: 12,'
+                '        generateLabels: function(chart) { var d=chart.data; return d.labels.map(function(l,i){ return {text: l+" ("+d.datasets[0].data[i].toLocaleString("es-CO")+"%)", fillStyle: d.datasets[0].backgroundColor[i], hidden: false, index: i}; }); }'
+                '      } } }'
+                '    }'
+                '  });'
+                '});'
+                '</script>'
+            )
+        else:
+            axis_config = "indexAxis: 'y'," if is_horizontal else ""
+            bg_dark = green_dark if is_horizontal else dark_colors
+            bg_light = green_light if is_horizontal else light_colors
+            value_axis = "x" if is_horizontal else "y"
+            label_axis = "y" if is_horizontal else "x"
 
-        blocks.append(
-            '<div class="section">'
-            '<h2 class="section-title">' + title + '</h2>'
-            '<div class="chart-container" style="height:' + str(chart_height) + 'px">'
-            '<canvas id="' + canvas_id + '"></canvas></div></div>'
-            '<script>'
-            'document.addEventListener("DOMContentLoaded", function() {'
-            '  var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;'
-            '  new Chart(document.getElementById("' + canvas_id + '").getContext("2d"), {'
-            '    type: "bar",'
-            '    data: { labels: ' + labels_json + ', datasets: [{ label: "Valor", data: ' + values_json + ','
-            '      backgroundColor: isDark ? ' + bg_dark + ' : ' + bg_light + ','
-            '      borderRadius: 6, borderSkipped: false }] },'
-            '    options: { ' + axis_config + ' responsive: true, maintainAspectRatio: false,'
-            '      plugins: { legend: { display: false } },'
-            '      scales: {'
-            '        ' + value_axis + ': { beginAtZero: true, grid: { color: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" },'
-            '          ticks: { color: isDark ? "#9c9a92" : "#73726c", callback: function(v) { return v.toLocaleString("es-CO"); } } },'
-            '        ' + label_axis + ': { grid: { display: false }, ticks: { color: isDark ? "#9c9a92" : "#73726c", maxRotation: 45, autoSkip: false } }'
-            '      }'
-            '    }'
-            '  });'
-            '});'
-            '</script>'
-        )
+            blocks.append(
+                '<div class="section">'
+                '<h2 class="section-title">' + title + '</h2>'
+                '<div class="chart-container" style="height:' + str(chart_height) + 'px">'
+                '<canvas id="' + canvas_id + '"></canvas></div></div>'
+                '<script>'
+                'document.addEventListener("DOMContentLoaded", function() {'
+                '  var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;'
+                '  new Chart(document.getElementById("' + canvas_id + '").getContext("2d"), {'
+                '    type: "bar",'
+                '    data: { labels: ' + labels_json + ', datasets: [{ label: "Valor", data: ' + values_json + ','
+                '      backgroundColor: isDark ? ' + bg_dark + ' : ' + bg_light + ','
+                '      borderRadius: 6, borderSkipped: false }] },'
+                '    options: { ' + axis_config + ' responsive: true, maintainAspectRatio: false,'
+                '      plugins: { legend: { display: false } },'
+                '      scales: {'
+                '        ' + value_axis + ': { beginAtZero: true, grid: { color: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" },'
+                '          ticks: { color: isDark ? "#9c9a92" : "#73726c", callback: function(v) { return v.toLocaleString("es-CO"); } } },'
+                '        ' + label_axis + ': { grid: { display: false }, ticks: { color: isDark ? "#9c9a92" : "#73726c", maxRotation: 45, autoSkip: false } }'
+                '      }'
+                '    }'
+                '  });'
+                '});'
+                '</script>'
+            )
 
     return (
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>'

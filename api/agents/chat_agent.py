@@ -529,9 +529,13 @@ def _build_company_card(empresa_id: str) -> str:
             f"💡 **Propuesta de valor:**\n{getattr(row, 'value_proposition', '') or 'N/D'}\n\n"
             f"📦 **Productos/Servicios:**\n{offerings_str}\n\n"
             f"👥 **Tamaño:** {row.company_size or 'N/D'} ({row.num_employees or 'N/D'} empleados)\n"
-            f"📍 **Ubicación:** {row.city or 'N/D'}, {getattr(row, 'country', 'Colombia')}\n\n"
+            f"📍 **Ubicación:** {row.city or 'N/D'}, {getattr(row, 'country', 'Colombia')}\n"
+            f"📞 **Teléfono:** {getattr(row, 'phone', '') or 'N/D'}\n"
+            f"🆔 **NIT/RUT:** {getattr(row, 'tax_id', '') or 'N/D'}\n\n"
             f"🌐 **Web:** {getattr(row, 'website_url', '') or 'N/D'}\n"
-            f"🎨 **Voz de marca:** {getattr(row, 'brand_voice', '') or 'N/D'}\n\n"
+            f"🎨 **Voz de marca:** {getattr(row, 'brand_voice', '') or 'N/D'}\n"
+            f"🕐 **Zona horaria:** {getattr(row, 'timezone', '') or 'America/Bogota'}\n"
+            f"💲 **Moneda:** {row.currency or 'COP'}\n\n"
             f"🎯 **Cliente ideal:**\n{icp}\n\n"
             f"🏆 **Competidores:**\n{competitors}\n\n"
             f"📊 **Prioridades:** {interests_str}\n\n"
@@ -628,6 +632,7 @@ async def generate_response(state: ChatState) -> dict:
                     user_id=user_id,
                     user_name=_onb_name,
                     user_response=state.get("message", ""),
+                    source=state.get("source", "api"),
                 )
             return {
                 "response": result.get("message", "Iniciemos la configuración de tu empresa."),

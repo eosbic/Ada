@@ -117,12 +117,13 @@ async def classify_intent(state: RouterState) -> dict:
             "routed_to": "chat_agent",
         }
 
-    # WHITELIST: "qué sabes de mí"
-    memory_patterns = [
-        "qué sabes de mí", "que sabes de mi", "qué recuerdas de mí", "que recuerdas de mi",
-        "qué has aprendido de mí", "que has aprendido de mi", "qué sabes de mi",
+    # WHITELIST: "qué sabes de mí" (exact match para no atrapar "qué sabes de mi empresa")
+    my_memory_exact = [
+        "qué sabes de mí", "que sabes de mi", "qué recuerdas de mí",
+        "que recuerdas de mi", "qué has aprendido de mí", "que has aprendido de mi",
     ]
-    if any(p in msg_lower for p in memory_patterns):
+    cleaned = msg_lower.rstrip("?!., ")
+    if cleaned in my_memory_exact:
         print(f"ROUTER: my_memories detected")
         return {"intent": "my_memories", "confidence": 1.0, "routed_to": "chat_agent"}
 

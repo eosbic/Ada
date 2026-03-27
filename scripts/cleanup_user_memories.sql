@@ -15,3 +15,4 @@ DELETE FROM user_memories WHERE fact ILIKE '%big data%';
 DELETE FROM user_memories WHERE fact ILIKE '%sectores de servicios%';
 DELETE FROM user_memories WHERE fact ILIKE '%considerando usar google%';
 DELETE FROM user_memories WHERE fact ILIKE '%notion y plane%' AND category = 'interest';
+DELETE FROM user_memories WHERE fact ILIKE '%pruebas con ADA%';

@@ -102,6 +102,9 @@ class CreateEmpresaRequest(BaseModel):
     sector: str = "generic"
     plan_type: str = "start"
     extra_users: int = 0
+    admin_nombre: Optional[str] = None
+    admin_email: Optional[str] = None
+    admin_password: Optional[str] = None
 
 
 class UpdateEmpresaRequest(BaseModel):
@@ -382,13 +385,41 @@ async def create_empresa(
                     "anlimit": pricing["monthly_analyses_limit"],
                 },
             )
+            # Crear usuario admin si se proporcionaron los datos
+            admin_user_id = None
+            if req.admin_email and req.admin_nombre and req.admin_password:
+                from api.security import hash_password as hash_pw
+                user_result = await db.execute(
+                    sql_text("""
+                        INSERT INTO usuarios (empresa_id, email, nombre, password, rol)
+                        VALUES (:eid, :email, :nombre, :password, 'admin')
+                        RETURNING id
+                    """),
+                    {
+                        "eid": empresa_id,
+                        "email": req.admin_email.strip().lower(),
+                        "nombre": req.admin_nombre,
+                        "password": hash_pw(req.admin_password),
+                    },
+                )
+                admin_user_id = str(user_result.fetchone()[0])
+
             await db.commit()
 
+        audit_details = {
+            "nombre": req.nombre, "plan": req.plan_type, "extra_users": req.extra_users,
+            "monthly_limit": pricing["monthly_limit"],
+        }
+        if admin_user_id:
+            audit_details["admin_user_created"] = req.admin_email
         await _audit(admin["admin_id"], "create_empresa", "empresa", str(empresa_id),
-                     {"nombre": req.nombre, "plan": req.plan_type, "extra_users": req.extra_users,
-                      "monthly_limit": pricing["monthly_limit"]}, _get_ip(request))
+                     audit_details, _get_ip(request))
 
-        return {"id": str(empresa_id), "nombre": req.nombre, "plan_type": req.plan_type, **pricing}
+        resp = {"id": str(empresa_id), "nombre": req.nombre, "plan_type": req.plan_type, **pricing}
+        if admin_user_id:
+            resp["admin_user_id"] = admin_user_id
+            resp["admin_email"] = req.admin_email
+        return resp
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

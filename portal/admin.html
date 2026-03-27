@@ -347,7 +347,8 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
   const [showDelete, setShowDelete] = useState(null);
   const PLANS = { start: { monthly_limit: 50, base_users: 3, ppeu: 16.67, analyses: 30 }, premium: { monthly_limit: 70, base_users: 3, ppeu: 23, analyses: 50 }, enterprise: { monthly_limit: 90, base_users: 3, ppeu: 30, analyses: 80 } };
   const calcPrice = (p,x) => { const pl=PLANS[p]||PLANS.start; return (pl.monthly_limit + (x||0)*pl.ppeu).toFixed(2); };
-  const [form, setForm] = useState({ nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0 });
+  const [form, setForm] = useState({ nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0, admin_nombre: '', admin_email: '', admin_password: '' });
+  const FORM_RESET = { nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0, admin_nombre: '', admin_email: '', admin_password: '' };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -363,7 +364,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     try {
       await post('/admin/api/empresas', form);
       setToast({ message: 'Empresa creada', type: 'success' });
-      setShowCreate(false); setForm({ nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0 }); load();
+      setShowCreate(false); setForm({...FORM_RESET}); load();
     } catch (e) { setToast({ message: e.message, type: 'error' }); }
   }
 
@@ -387,7 +388,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     <div>
       <div className="card-header" style={{marginBottom:'1rem'}}>
         <div className="page-title" style={{marginBottom:0}}>Empresas</div>
-        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic',plan_type:'start',extra_users:0}); setShowCreate(true); }}>+ Nueva empresa</button>
+        <button className="btn btn-primary" onClick={() => { setForm({...FORM_RESET}); setShowCreate(true); }}>+ Nueva empresa</button>
       </div>
 
       <div className="search-bar">
@@ -443,6 +444,16 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
             <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>
               Total usuarios: {3+(form.extra_users||0)} · Precio: ${calcPrice(form.plan_type,form.extra_users)}/mes · Analisis: {PLANS[form.plan_type]?.analyses||30}/mes
             </div>
+          </div>
+          <div style={{borderTop:'1px solid var(--border)',marginTop:'1rem',paddingTop:'1rem'}}>
+            <div style={{fontSize:'.85rem',fontWeight:600,marginBottom:'.6rem',color:'var(--accent)'}}>Administrador de la empresa</div>
+            <div className="form-group"><label>Nombre del responsable</label>
+              <input value={form.admin_nombre} onChange={e => setForm({...form, admin_nombre:e.target.value})} placeholder="Ej: Juan Perez" /></div>
+            <div className="form-group"><label>Email corporativo</label>
+              <input type="email" value={form.admin_email} onChange={e => setForm({...form, admin_email:e.target.value})} placeholder="juan@empresa.com" /></div>
+            <div className="form-group"><label>Contrasena inicial</label>
+              <input type="password" value={form.admin_password} onChange={e => setForm({...form, admin_password:e.target.value})} placeholder="Minimo 6 caracteres" /></div>
+            <div style={{fontSize:'.7rem',color:'var(--text3)'}}>Opcional — si no se llena, la empresa se crea sin usuario</div>
           </div>
           <div className="modal-actions">
             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancelar</button>

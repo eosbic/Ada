@@ -281,7 +281,7 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
         )).fetchone()
 
         profile = (await db.execute(
-            sql_text("SELECT company_name, industry_type, kpis, onboarding_completed FROM ada_company_profile WHERE empresa_id = :id"),
+            sql_text("SELECT company_name, industry_type FROM ada_company_profile WHERE empresa_id = :id"),
             {"id": empresa_id},
         )).fetchone()
 
@@ -329,8 +329,7 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
         "profile": {
             "company_name": profile.company_name if profile else None,
             "industry_type": profile.industry_type if profile else None,
-            "kpis": profile.kpis if profile else None,
-            "onboarding_completed": profile.onboarding_completed if profile else False,
+            
         } if profile else None,
         "reportes": [
             {

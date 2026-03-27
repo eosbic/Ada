@@ -372,7 +372,7 @@ def _render_chart(metrics, markdown_content=""):
                 '    data: { labels: ' + labels_json + ', datasets: [{ data: ' + values_json + ','
                 '      backgroundColor: isDark ? ' + dark_colors + ' : ' + light_colors + ','
                 '      borderColor: isDark ? "#0c1220" : "#ffffff", borderWidth: 2 }] },'
-                '    options: { responsive: true, maintainAspectRatio: true, aspectRatio: 1.2, cutout: "55%",'
+                '    options: { responsive: true, maintainAspectRatio: true, aspectRatio: 1, cutout: "55%",'
                 '      plugins: { legend: { position: "right", labels: { color: isDark ? "#9c9a92" : "#73726c", font: { size: 11 }, padding: 12,'
                 '        generateLabels: function(chart) { var d=chart.data; return d.labels.map(function(l,i){ return {text: l+" ("+d.datasets[0].data[i].toLocaleString("es-CO")+"%)", fillStyle: d.datasets[0].backgroundColor[i], hidden: false, index: i}; }); }'
                 '      } } }'

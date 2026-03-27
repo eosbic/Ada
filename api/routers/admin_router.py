@@ -46,17 +46,30 @@ def _get_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# ─── Plan catalog ──────────────────────────────────────
+
+PLAN_CATALOG = {
+    "start":      {"monthly_limit": 50,  "max_users": 3},
+    "pro":        {"monthly_limit": 70,  "max_users": 5},
+    "enterprise": {"monthly_limit": 120, "max_users": 10},
+}
+
+
 # ─── Request models ────────────────────────────────────
 
 
 class CreateEmpresaRequest(BaseModel):
     nombre: str
     sector: str = "generic"
+    plan_type: str = "start"
+    monthly_limit: Optional[float] = None
 
 
 class UpdateEmpresaRequest(BaseModel):
     nombre: Optional[str] = None
     sector: Optional[str] = None
+    plan_type: Optional[str] = None
+    monthly_limit: Optional[float] = None
 
 
 class CreateUsuarioRequest(BaseModel):
@@ -78,6 +91,12 @@ class UpdateBudgetRequest(BaseModel):
 
 
 # ─── Endpoints ──────────────────────────────────────────
+
+
+@router.get("/plans")
+async def list_plans(admin: dict = Depends(get_current_admin)):
+    """Catalogo de planes disponibles."""
+    return {k: v for k, v in PLAN_CATALOG.items()}
 
 
 @router.get("/dashboard")
@@ -146,7 +165,7 @@ async def list_empresas(
                    (SELECT COUNT(*) FROM usuarios u WHERE u.empresa_id = e.id) as user_count,
                    (SELECT COUNT(*) FROM ada_reports r WHERE r.empresa_id = e.id) as report_count,
                    (SELECT COUNT(*) FROM tenant_credentials tc WHERE tc.empresa_id = e.id AND tc.is_active = TRUE) as credential_count,
-                   bl.plan_type, bl.monthly_limit, bl.used_this_month, bl.topup_balance
+                   bl.plan_type, bl.monthly_limit, bl.used_this_month, bl.topup_balance, bl.max_users
             FROM empresas e
             LEFT JOIN budget_limits bl ON bl.empresa_id = e.id
             {search_clause}
@@ -178,6 +197,7 @@ async def list_empresas(
                 "monthly_limit": float(r.monthly_limit or 0),
                 "used_this_month": float(r.used_this_month or 0),
                 "topup_balance": float(r.topup_balance or 0),
+                "max_users": r.max_users or 3,
             }
             for r in rows
         ],
@@ -207,7 +227,7 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
         )).fetchall()
 
         budget = (await db.execute(
-            sql_text("SELECT plan_type, monthly_limit, used_this_month, total_tokens_this_month, topup_balance, alert_sent_this_month FROM budget_limits WHERE empresa_id = :id"),
+            sql_text("SELECT plan_type, monthly_limit, used_this_month, total_tokens_this_month, topup_balance, alert_sent_this_month, max_users FROM budget_limits WHERE empresa_id = :id"),
             {"id": empresa_id},
         )).fetchone()
 
@@ -250,6 +270,7 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
             "total_tokens_this_month": int(budget.total_tokens_this_month or 0) if budget else 0,
             "topup_balance": float(budget.topup_balance or 0) if budget else 0,
             "alert_sent": budget.alert_sent_this_month if budget else False,
+            "max_users": budget.max_users if budget else 3,
         } if budget else None,
         "profile": {
             "company_name": profile.company_name if profile else None,
@@ -274,9 +295,16 @@ async def create_empresa(
     request: Request,
     admin: dict = Depends(get_current_admin),
 ):
-    """Crear empresa + budget default."""
+    """Crear empresa + budget con plan seleccionado."""
     if admin["role"] not in ("superadmin", "admin"):
         raise HTTPException(status_code=403, detail="Permiso insuficiente")
+
+    plan = PLAN_CATALOG.get(req.plan_type)
+    if not plan:
+        raise HTTPException(status_code=400, detail=f"Plan invalido. Opciones: {', '.join(PLAN_CATALOG.keys())}")
+
+    monthly_limit = req.monthly_limit if req.monthly_limit is not None else plan["monthly_limit"]
+    max_users = plan["max_users"]
 
     try:
         async with AsyncSessionLocal() as db:
@@ -290,21 +318,22 @@ async def create_empresa(
             )
             empresa_id = result.fetchone()[0]
 
-            # Budget default
             await db.execute(
                 sql_text("""
-                    INSERT INTO budget_limits (empresa_id, monthly_limit, plan_type)
-                    VALUES (:eid, 10.0, 'start')
-                    ON CONFLICT (empresa_id) DO NOTHING
+                    INSERT INTO budget_limits (empresa_id, monthly_limit, plan_type, max_users)
+                    VALUES (:eid, :limit, :plan, :maxu)
+                    ON CONFLICT (empresa_id) DO UPDATE SET
+                        monthly_limit = :limit, plan_type = :plan, max_users = :maxu
                 """),
-                {"eid": empresa_id},
+                {"eid": empresa_id, "limit": monthly_limit, "plan": req.plan_type, "maxu": max_users},
             )
             await db.commit()
 
         await _audit(admin["admin_id"], "create_empresa", "empresa", str(empresa_id),
-                     {"nombre": req.nombre, "sector": req.sector}, _get_ip(request))
+                     {"nombre": req.nombre, "sector": req.sector, "plan": req.plan_type, "limit": monthly_limit},
+                     _get_ip(request))
 
-        return {"id": str(empresa_id), "nombre": req.nombre, "sector": req.sector}
+        return {"id": str(empresa_id), "nombre": req.nombre, "sector": req.sector, "plan_type": req.plan_type}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -317,28 +346,61 @@ async def update_empresa(
     request: Request,
     admin: dict = Depends(get_current_admin),
 ):
-    """Actualizar nombre/sector de empresa."""
-    updates = {}
+    """Actualizar empresa: nombre, sector, plan, limite."""
+    empresa_updates = {}
     if req.nombre is not None:
-        updates["nombre"] = req.nombre
+        empresa_updates["nombre"] = req.nombre
     if req.sector is not None:
-        updates["sector"] = req.sector
+        empresa_updates["sector"] = req.sector
 
-    if not updates:
+    has_budget_change = req.plan_type is not None or req.monthly_limit is not None
+
+    if not empresa_updates and not has_budget_change:
         raise HTTPException(status_code=400, detail="Nada que actualizar")
 
-    set_clauses = ", ".join([f"{k} = :{k}" for k in updates])
-
     async with AsyncSessionLocal() as db:
-        await db.execute(
-            sql_text(f"UPDATE empresas SET {set_clauses} WHERE id = :id"),
-            {**updates, "id": empresa_id},
-        )
+        if empresa_updates:
+            set_clauses = ", ".join([f"{k} = :{k}" for k in empresa_updates])
+            await db.execute(
+                sql_text(f"UPDATE empresas SET {set_clauses} WHERE id = :id"),
+                {**empresa_updates, "id": empresa_id},
+            )
+
+        if has_budget_change:
+            if req.plan_type and req.plan_type not in PLAN_CATALOG:
+                raise HTTPException(status_code=400, detail=f"Plan invalido. Opciones: {', '.join(PLAN_CATALOG.keys())}")
+
+            budget_sets = []
+            budget_params = {"eid": empresa_id}
+            if req.plan_type:
+                plan = PLAN_CATALOG[req.plan_type]
+                budget_sets.append("plan_type = :plan")
+                budget_sets.append("max_users = :maxu")
+                budget_params["plan"] = req.plan_type
+                budget_params["maxu"] = plan["max_users"]
+                if req.monthly_limit is None:
+                    budget_sets.append("monthly_limit = :limit")
+                    budget_params["limit"] = plan["monthly_limit"]
+            if req.monthly_limit is not None:
+                budget_sets.append("monthly_limit = :limit")
+                budget_params["limit"] = req.monthly_limit
+
+            if budget_sets:
+                await db.execute(
+                    sql_text(f"UPDATE budget_limits SET {', '.join(budget_sets)} WHERE empresa_id = :eid"),
+                    budget_params,
+                )
+
         await db.commit()
 
-    await _audit(admin["admin_id"], "update_empresa", "empresa", empresa_id, updates, _get_ip(request))
+    audit = {**empresa_updates}
+    if req.plan_type:
+        audit["plan_type"] = req.plan_type
+    if req.monthly_limit is not None:
+        audit["monthly_limit"] = req.monthly_limit
+    await _audit(admin["admin_id"], "update_empresa", "empresa", empresa_id, audit, _get_ip(request))
 
-    return {"updated": True, **updates}
+    return {"updated": True, **audit}
 
 
 @router.post("/usuarios")
@@ -355,6 +417,22 @@ async def create_usuario(
 
     try:
         async with AsyncSessionLocal() as db:
+            # Enforce max_users del plan
+            budget = (await db.execute(
+                sql_text("SELECT max_users, plan_type FROM budget_limits WHERE empresa_id = :eid"),
+                {"eid": req.empresa_id},
+            )).fetchone()
+            if budget and budget.max_users:
+                user_count = (await db.execute(
+                    sql_text("SELECT COUNT(*) FROM usuarios WHERE empresa_id = :eid"),
+                    {"eid": req.empresa_id},
+                )).scalar()
+                if user_count >= budget.max_users:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Limite alcanzado: el plan {budget.plan_type} permite maximo {budget.max_users} usuarios",
+                    )
+
             result = await db.execute(
                 sql_text("""
                     INSERT INTO usuarios (empresa_id, email, nombre, password, rol)

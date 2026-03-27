@@ -345,7 +345,8 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(null);
   const [showDelete, setShowDelete] = useState(null);
-  const [form, setForm] = useState({ nombre: '', sector: 'generic' });
+  const PLANS = { start: { monthly_limit: 50, max_users: 3 }, pro: { monthly_limit: 70, max_users: 5 }, enterprise: { monthly_limit: 120, max_users: 10 } };
+  const [form, setForm] = useState({ nombre: '', sector: 'generic', plan_type: 'start', monthly_limit: 50 });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -361,7 +362,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     try {
       await post('/admin/api/empresas', form);
       setToast({ message: 'Empresa creada', type: 'success' });
-      setShowCreate(false); setForm({ nombre: '', sector: 'generic' }); load();
+      setShowCreate(false); setForm({ nombre: '', sector: 'generic', plan_type: 'start', monthly_limit: 50 }); load();
     } catch (e) { setToast({ message: e.message, type: 'error' }); }
   }
 
@@ -385,7 +386,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     <div>
       <div className="card-header" style={{marginBottom:'1rem'}}>
         <div className="page-title" style={{marginBottom:0}}>Empresas</div>
-        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic'}); setShowCreate(true); }}>+ Nueva empresa</button>
+        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic',plan_type:'start',monthly_limit:50}); setShowCreate(true); }}>+ Nueva empresa</button>
       </div>
 
       <div className="search-bar">
@@ -395,25 +396,26 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
       {loading ? <div style={{textAlign:'center',padding:'2rem'}}><span className="spinner" /></div> : (
         <div className="card" style={{padding:0}}>
           <div className="table-wrap"><table>
-            <thead><tr><th>Nombre</th><th>Sector</th><th>Usuarios</th><th>Reportes</th><th>Plan</th><th>Creada</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Sector</th><th>Usuarios</th><th>Reportes</th><th>Plan</th><th>Limite</th><th>Creada</th><th>Acciones</th></tr></thead>
             <tbody>
               {empresas.map(e => (
                 <tr key={e.id}>
                   <td><a href="#" onClick={ev => { ev.preventDefault(); onSelectEmpresa(e); }} style={{fontWeight:500}}>{e.nombre}</a></td>
                   <td><span className="badge badge-blue">{e.sector}</span></td>
-                  <td>{e.user_count}</td>
+                  <td>{e.user_count}{e.max_users ? <span style={{color:'var(--text3)',fontSize:'.7rem'}}>/{e.max_users}</span> : ''}</td>
                   <td>{e.report_count}</td>
-                  <td><span className="badge badge-gray">{e.plan_type || 'N/A'}</span></td>
+                  <td><span className={`badge ${e.plan_type==='enterprise'?'badge-green':e.plan_type==='pro'?'badge-blue':'badge-gray'}`}>{e.plan_type || 'N/A'}</span></td>
+                  <td style={{fontFamily:'monospace',fontSize:'.8rem'}}>${e.monthly_limit || 0}</td>
                   <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{e.created_at?.slice(0,10)}</td>
                   <td>
                     <div className="btn-group">
-                      <button className="btn btn-ghost btn-sm" onClick={() => { setForm({nombre:e.nombre,sector:e.sector}); setShowEdit(e); }}>Editar</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => { setForm({nombre:e.nombre,sector:e.sector,plan_type:e.plan_type||'start',monthly_limit:e.monthly_limit||50}); setShowEdit(e); }}>Editar</button>
                       <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(e)}>Eliminar</button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {empresas.length === 0 && <tr><td colSpan="7"><div className="empty">Sin empresas</div></td></tr>}
+              {empresas.length === 0 && <tr><td colSpan="8"><div className="empty">Sin empresas</div></td></tr>}
             </tbody>
           </table></div>
         </div>
@@ -426,6 +428,17 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
             <select value={form.sector} onChange={e => setForm({...form,sector:e.target.value})}>
               {['generic','retail','construccion','salud','agricultura','servicios','tecnologia','educacion','alimentos','transporte','inmobiliario','financiero','consultoria','restaurante','manufactura'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+          </div>
+          <div className="form-group"><label>Plan</label>
+            <select value={form.plan_type} onChange={e => { const p=e.target.value; setForm({...form, plan_type:p, monthly_limit:PLANS[p].monthly_limit}); }}>
+              <option value="start">Start — $50/mes (3 usuarios)</option>
+              <option value="pro">Pro — $70/mes (5 usuarios)</option>
+              <option value="enterprise">Enterprise — $120/mes (10 usuarios)</option>
+            </select>
+          </div>
+          <div className="form-group"><label>Limite mensual (USD)</label>
+            <input type="number" step="1" min="1" value={form.monthly_limit} onChange={e => setForm({...form,monthly_limit:parseFloat(e.target.value)||0})} />
+            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>Max usuarios: {PLANS[form.plan_type]?.max_users || 3}</div>
           </div>
           <div className="modal-actions">
             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancelar</button>
@@ -441,6 +454,17 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
             <select value={form.sector} onChange={e => setForm({...form,sector:e.target.value})}>
               {['generic','retail','construccion','salud','agricultura','servicios','tecnologia','educacion','alimentos','transporte','inmobiliario','financiero','consultoria','restaurante','manufactura'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+          </div>
+          <div className="form-group"><label>Plan</label>
+            <select value={form.plan_type} onChange={e => { const p=e.target.value; setForm({...form, plan_type:p, monthly_limit:PLANS[p].monthly_limit}); }}>
+              <option value="start">Start — $50/mes (3 usuarios)</option>
+              <option value="pro">Pro — $70/mes (5 usuarios)</option>
+              <option value="enterprise">Enterprise — $120/mes (10 usuarios)</option>
+            </select>
+          </div>
+          <div className="form-group"><label>Limite mensual (USD)</label>
+            <input type="number" step="1" min="1" value={form.monthly_limit} onChange={e => setForm({...form,monthly_limit:parseFloat(e.target.value)||0})} />
+            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>Max usuarios: {PLANS[form.plan_type]?.max_users || 3}</div>
           </div>
           <div className="modal-actions">
             <button className="btn btn-ghost" onClick={() => setShowEdit(null)}>Cancelar</button>
@@ -526,6 +550,8 @@ function EmpresaDetailPage({ empresa, setToast, goBack }) {
         <div className="stat-card"><div className="label">Usuarios</div><div className="value accent">{detail.usuarios.length}</div></div>
         <div className="stat-card"><div className="label">Reportes</div><div className="value accent">{reports?.total || 0}</div></div>
         <div className="stat-card"><div className="label">Plan</div><div className="value">{detail.budget?.plan_type || 'N/A'}</div></div>
+        <div className="stat-card"><div className="label">Limite mensual</div><div className="value">${detail.budget?.monthly_limit || 0}</div></div>
+        <div className="stat-card"><div className="label">Max usuarios</div><div className="value">{detail.budget?.max_users || 3}</div></div>
         <div className="stat-card"><div className="label">Onboarding</div><div className="value">{detail.profile?.onboarding_completed ? <span style={{color:'var(--green)'}}>Completo</span> : <span style={{color:'var(--yellow)'}}>Pendiente</span>}</div></div>
       </div>
 

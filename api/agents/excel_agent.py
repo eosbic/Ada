@@ -290,18 +290,82 @@ def extract_charts(state: ExcelState) -> dict:
     return result
 
 
+def _clean_col_name(col: str) -> str:
+    """Limpia nombre de columna para mostrar al CEO."""
+    name = col.replace("_", " ").replace("%", "").strip()
+    return name[0].upper() + name[1:] if name else col
+
+
+def _fmt_val(value) -> str:
+    """Formatea valor numerico con separadores de miles."""
+    if not isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, float) and abs(value) >= 1000:
+        return f"${value:,.0f}"
+    if isinstance(value, float):
+        return f"{value:,.2f}"
+    return f"{value:,}"
+
+
+def _neg_explanation(col: str) -> str:
+    """Genera explicacion de negocio para valores negativos segun la columna."""
+    c = col.lower().replace("_", " ")
+    if "utilidad" in c or "ganancia" in c:
+        return "revisar politica de precios"
+    if "margen" in c:
+        return "se esta vendiendo por debajo del costo"
+    if "variacion" in c or "variación" in c:
+        return "tendencia decreciente"
+    if "saldo" in c:
+        return "revisar estado de cartera"
+    if "descuento" in c:
+        return "descuentos excesivos aplicados"
+    return "requiere revision"
+
+
 def generate_alerts(state: ExcelState) -> dict:
     alerts = []
+
     for sheet, calcs in state.get("calculations", {}).items():
         negocio = calcs.get("_negocio", {})
-        for p in negocio.get("productos_margen_negativo", []):
-            alerts.append({"level": "critical", "message": f"🔴 {p}: margen negativo"})
+        # Productos con margen negativo — critico
+        prods_neg = negocio.get("productos_margen_negativo", [])
+        if prods_neg:
+            if len(prods_neg) <= 3:
+                for p in prods_neg:
+                    alerts.append({"level": "critical", "message": f"🔴 {p} tiene margen negativo — se vende por debajo del costo"})
+            else:
+                alerts.append({"level": "critical", "message": f"🔴 {len(prods_neg)} productos con margen negativo — revisar estructura de costos (ej: {', '.join(prods_neg[:3])})"})
+
+        # Valores negativos en columnas — warning con explicacion
         for col, stats in calcs.items():
-            if col.startswith("_"): continue
+            if col.startswith("_"):
+                continue
             if isinstance(stats, dict) and stats.get("negativos", 0) > 0:
-                alerts.append({"level": "warning", "message": f"⚠️ '{col}': {stats['negativos']} valores negativos"})
-    for a in state.get("anomalies", [])[:5]:
-        alerts.append({"level": "info", "message": f"📊 Outlier en '{a['column']}' (hoja {a['sheet']}): {a['value']}"})
+                n = stats["negativos"]
+                name = _clean_col_name(col)
+                explanation = _neg_explanation(col)
+                alerts.append({"level": "warning", "message": f"⚠️ {n:,} operaciones con {name.lower()} negativo — {explanation}"})
+
+    # Outliers — maximo 3, sin nombre de hoja
+    anomalies = state.get("anomalies", [])
+    outlier_count = 0
+    for a in anomalies:
+        if outlier_count >= 3:
+            break
+        name = _clean_col_name(a.get("column", ""))
+        val = _fmt_val(a.get("value"))
+        alerts.append({"level": "info", "message": f"📊 Valor atipico en {name}: {val} (revisar si es correcto)"})
+        outlier_count += 1
+    remaining = len(anomalies) - outlier_count
+    if remaining > 0:
+        alerts.append({"level": "info", "message": f"📊 {remaining} valores atipicos adicionales detectados"})
+
+    # Si solo hay alertas info (outliers), no asustar al CEO
+    has_critical_or_warning = any(a["level"] in ("critical", "warning") for a in alerts)
+    if not has_critical_or_warning:
+        alerts = []  # no mostrar puros outliers informativos
+
     print(f"EXCEL: {len(alerts)} alertas generadas")
     return {"alerts": alerts}
 

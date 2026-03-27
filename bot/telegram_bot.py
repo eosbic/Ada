@@ -178,16 +178,72 @@ def _sanitize_text(text: str) -> str:
     return "".join(cleaned_chars)
 
 
+def _fix_markdown_for_telegram(text: str) -> str:
+    """Arregla Markdown para que Telegram lo acepte."""
+    result = text
+
+    # 1. Proteger URLs
+    urls = re.findall(r'https?://[^\s\)]+', result)
+    url_placeholders = {}
+    for i, url in enumerate(urls):
+        placeholder = f"__URL_PLACEHOLDER_{i}__"
+        url_placeholders[placeholder] = url
+        result = result.replace(url, placeholder)
+
+    # 2. Proteger emails
+    emails = re.findall(r'[\w.-]+@[\w.-]+\.\w+', result)
+    email_placeholders = {}
+    for i, email in enumerate(emails):
+        placeholder = f"__EMAIL_PLACEHOLDER_{i}__"
+        email_placeholders[placeholder] = email
+        result = result.replace(email, placeholder)
+
+    # 3. Verificar que ** estén balanceados
+    count_bold = result.count("**")
+    if count_bold % 2 != 0:
+        last_pos = result.rfind("**")
+        result = result[:last_pos] + result[last_pos+2:]
+
+    # 4. Reemplazar * sueltos (no **) con • para evitar cursiva rota
+    result = re.sub(r'(?<!\*)\*(?!\*)', '•', result)
+
+    # 5. Restaurar URLs y emails
+    for placeholder, url in url_placeholders.items():
+        result = result.replace(placeholder, url)
+    for placeholder, email in email_placeholders.items():
+        result = result.replace(placeholder, email)
+
+    # 6. Bullets markdown → bullet unicode
+    result = re.sub(r'^(\s*)-\s+', r'\1• ', result, flags=re.MULTILINE)
+
+    return result
+
+
+async def _send_markdown_safe(message_obj, text: str):
+    """Envía mensaje con Markdown. Si falla, envía sin formato."""
+    try:
+        await message_obj.reply_text(text, parse_mode="Markdown")
+    except Exception as e:
+        print(f"TELEGRAM BOT: Markdown parse failed ({e}), sending plain text")
+        clean = text.replace("**", "").replace("__", "").replace("```", "").replace("`", "")
+        try:
+            await message_obj.reply_text(clean)
+        except Exception as e2:
+            print(f"TELEGRAM BOT: Even plain text failed: {e2}")
+            await message_obj.reply_text("Error mostrando la respuesta. Intenta de nuevo.")
+
+
 async def _safe_send_text(update: Update, processing_msg, text: str):
     sanitized = _sanitize_text(text)
-    chunks = _split_text(sanitized, max_len=3900)
+    formatted = _fix_markdown_for_telegram(sanitized)
+    chunks = _split_text(formatted, max_len=3900)
     first = chunks[0] if chunks else "Sin contenido."
 
-    print(f"TELEGRAM BOT: sending {len(chunks)} chunk(s)")
-    await update.message.reply_text(first)
+    print(f"TELEGRAM BOT: sending {len(chunks)} chunk(s) with Markdown")
+    await _send_markdown_safe(update.message, first)
 
     for extra in chunks[1:]:
-        await update.message.reply_text(extra)
+        await _send_markdown_safe(update.message, extra)
 
     try:
         if processing_msg:

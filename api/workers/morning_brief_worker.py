@@ -144,6 +144,20 @@ async def _generate_and_send_brief(user: dict):
         print(f"MORNING BRIEF: Error para {nombre}: {e}")
 
 
+async def _check_monthly_reset():
+    """Resetea analyses_used_this_month el dia 1 de cada mes."""
+    today = date.today()
+    if today.day != 1:
+        return
+    try:
+        from api.services.budget_service import reset_monthly_analyses
+        count = reset_monthly_analyses()
+        if count > 0:
+            print(f"MORNING BRIEF: Reset mensual de analisis — {count} empresas reseteadas")
+    except Exception as e:
+        print(f"MORNING BRIEF: Error en reset mensual: {e}")
+
+
 async def morning_brief_worker_loop():
     """Loop principal: cada minuto revisa si hay briefs pendientes."""
     print("MORNING BRIEF: Worker iniciado (per-user scheduling, check cada 60s)")
@@ -153,6 +167,9 @@ async def morning_brief_worker_loop():
 
     while True:
         try:
+            # Reset mensual de analisis (dia 1)
+            await _check_monthly_reset()
+
             users_due = await _get_users_due_now()
 
             if users_due:

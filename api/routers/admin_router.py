@@ -49,10 +49,49 @@ def _get_ip(request: Request) -> str:
 # ─── Plan catalog ──────────────────────────────────────
 
 PLAN_CATALOG = {
-    "start":      {"monthly_limit": 50,  "max_users": 3},
-    "pro":        {"monthly_limit": 70,  "max_users": 5},
-    "enterprise": {"monthly_limit": 120, "max_users": 10},
+    "start": {
+        "monthly_limit": 50,
+        "base_users": 3,
+        "price_per_extra_user": 16.67,
+        "monthly_analyses_limit": 30,
+        "models": ["gemini-flash", "qwen-72b"],
+    },
+    "premium": {
+        "monthly_limit": 70,
+        "base_users": 3,
+        "price_per_extra_user": 23.00,
+        "monthly_analyses_limit": 50,
+        "models": ["gemini-flash", "qwen-72b", "sonnet"],
+    },
+    "enterprise": {
+        "monthly_limit": 90,
+        "base_users": 3,
+        "price_per_extra_user": 30.00,
+        "monthly_analyses_limit": 80,
+        "models": ["gemini-flash", "qwen-72b", "sonnet", "opus"],
+    },
 }
+
+ANALYSIS_PACKS = {
+    "basic_pack":  {"analyses": 20,  "price": 8},
+    "pro_pack":    {"analyses": 50,  "price": 15},
+    "mega_pack":   {"analyses": 150, "price": 35},
+}
+
+
+def _calc_pricing(plan_type: str, extra_users: int = 0) -> dict:
+    """Calcula precio total, max_users y limites para un plan + extras."""
+    plan = PLAN_CATALOG[plan_type]
+    max_users = plan["base_users"] + extra_users
+    monthly_limit = plan["monthly_limit"] + (extra_users * plan["price_per_extra_user"])
+    return {
+        "max_users": max_users,
+        "monthly_limit": round(monthly_limit, 2),
+        "monthly_analyses_limit": plan["monthly_analyses_limit"],
+        "base_users": plan["base_users"],
+        "extra_users": extra_users,
+        "price_per_extra_user": plan["price_per_extra_user"],
+    }
 
 
 # ─── Request models ────────────────────────────────────
@@ -62,14 +101,14 @@ class CreateEmpresaRequest(BaseModel):
     nombre: str
     sector: str = "generic"
     plan_type: str = "start"
-    monthly_limit: Optional[float] = None
+    extra_users: int = 0
 
 
 class UpdateEmpresaRequest(BaseModel):
     nombre: Optional[str] = None
     sector: Optional[str] = None
     plan_type: Optional[str] = None
-    monthly_limit: Optional[float] = None
+    extra_users: Optional[int] = None
 
 
 class CreateUsuarioRequest(BaseModel):
@@ -95,8 +134,8 @@ class UpdateBudgetRequest(BaseModel):
 
 @router.get("/plans")
 async def list_plans(admin: dict = Depends(get_current_admin)):
-    """Catalogo de planes disponibles."""
-    return {k: v for k, v in PLAN_CATALOG.items()}
+    """Catalogo de planes y packs de analisis."""
+    return {"plans": PLAN_CATALOG, "analysis_packs": ANALYSIS_PACKS}
 
 
 @router.get("/dashboard")
@@ -165,7 +204,9 @@ async def list_empresas(
                    (SELECT COUNT(*) FROM usuarios u WHERE u.empresa_id = e.id) as user_count,
                    (SELECT COUNT(*) FROM ada_reports r WHERE r.empresa_id = e.id) as report_count,
                    (SELECT COUNT(*) FROM tenant_credentials tc WHERE tc.empresa_id = e.id AND tc.is_active = TRUE) as credential_count,
-                   bl.plan_type, bl.monthly_limit, bl.used_this_month, bl.topup_balance, bl.max_users
+                   bl.plan_type, bl.monthly_limit, bl.used_this_month, bl.topup_balance, bl.max_users,
+                   bl.base_users, bl.extra_users, bl.price_per_extra_user,
+                   bl.monthly_analyses_limit, bl.analyses_used_this_month
             FROM empresas e
             LEFT JOIN budget_limits bl ON bl.empresa_id = e.id
             {search_clause}
@@ -198,6 +239,11 @@ async def list_empresas(
                 "used_this_month": float(r.used_this_month or 0),
                 "topup_balance": float(r.topup_balance or 0),
                 "max_users": r.max_users or 3,
+                "base_users": r.base_users or 3,
+                "extra_users": r.extra_users or 0,
+                "price_per_extra_user": float(r.price_per_extra_user or 0),
+                "monthly_analyses_limit": r.monthly_analyses_limit or 30,
+                "analyses_used": r.analyses_used_this_month or 0,
             }
             for r in rows
         ],
@@ -227,7 +273,7 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
         )).fetchall()
 
         budget = (await db.execute(
-            sql_text("SELECT plan_type, monthly_limit, used_this_month, total_tokens_this_month, topup_balance, alert_sent_this_month, max_users FROM budget_limits WHERE empresa_id = :id"),
+            sql_text("SELECT plan_type, monthly_limit, used_this_month, total_tokens_this_month, topup_balance, alert_sent_this_month, max_users, base_users, extra_users, price_per_extra_user, monthly_analyses_limit, analyses_used_this_month FROM budget_limits WHERE empresa_id = :id"),
             {"id": empresa_id},
         )).fetchone()
 
@@ -271,6 +317,11 @@ async def get_empresa(empresa_id: str, admin: dict = Depends(get_current_admin))
             "topup_balance": float(budget.topup_balance or 0) if budget else 0,
             "alert_sent": budget.alert_sent_this_month if budget else False,
             "max_users": budget.max_users if budget else 3,
+            "base_users": budget.base_users if budget else 3,
+            "extra_users": budget.extra_users if budget else 0,
+            "price_per_extra_user": float(budget.price_per_extra_user or 0) if budget else 0,
+            "monthly_analyses_limit": budget.monthly_analyses_limit if budget else 30,
+            "analyses_used": budget.analyses_used_this_month if budget else 0,
         } if budget else None,
         "profile": {
             "company_name": profile.company_name if profile else None,
@@ -295,45 +346,49 @@ async def create_empresa(
     request: Request,
     admin: dict = Depends(get_current_admin),
 ):
-    """Crear empresa + budget con plan seleccionado."""
+    """Crear empresa + budget con plan y usuarios extra."""
     if admin["role"] not in ("superadmin", "admin"):
         raise HTTPException(status_code=403, detail="Permiso insuficiente")
 
-    plan = PLAN_CATALOG.get(req.plan_type)
-    if not plan:
+    if req.plan_type not in PLAN_CATALOG:
         raise HTTPException(status_code=400, detail=f"Plan invalido. Opciones: {', '.join(PLAN_CATALOG.keys())}")
 
-    monthly_limit = req.monthly_limit if req.monthly_limit is not None else plan["monthly_limit"]
-    max_users = plan["max_users"]
+    pricing = _calc_pricing(req.plan_type, req.extra_users)
 
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(
-                sql_text("""
-                    INSERT INTO empresas (nombre, sector)
-                    VALUES (:nombre, :sector)
-                    RETURNING id
-                """),
+                sql_text("INSERT INTO empresas (nombre, sector) VALUES (:nombre, :sector) RETURNING id"),
                 {"nombre": req.nombre, "sector": req.sector},
             )
             empresa_id = result.fetchone()[0]
 
             await db.execute(
                 sql_text("""
-                    INSERT INTO budget_limits (empresa_id, monthly_limit, plan_type, max_users)
-                    VALUES (:eid, :limit, :plan, :maxu)
+                    INSERT INTO budget_limits
+                        (empresa_id, plan_type, monthly_limit, max_users, base_users,
+                         extra_users, price_per_extra_user, monthly_analyses_limit)
+                    VALUES (:eid, :plan, :limit, :maxu, :base, :extra, :ppeu, :anlimit)
                     ON CONFLICT (empresa_id) DO UPDATE SET
-                        monthly_limit = :limit, plan_type = :plan, max_users = :maxu
+                        plan_type = :plan, monthly_limit = :limit, max_users = :maxu,
+                        base_users = :base, extra_users = :extra,
+                        price_per_extra_user = :ppeu, monthly_analyses_limit = :anlimit
                 """),
-                {"eid": empresa_id, "limit": monthly_limit, "plan": req.plan_type, "maxu": max_users},
+                {
+                    "eid": empresa_id, "plan": req.plan_type,
+                    "limit": pricing["monthly_limit"], "maxu": pricing["max_users"],
+                    "base": pricing["base_users"], "extra": pricing["extra_users"],
+                    "ppeu": pricing["price_per_extra_user"],
+                    "anlimit": pricing["monthly_analyses_limit"],
+                },
             )
             await db.commit()
 
         await _audit(admin["admin_id"], "create_empresa", "empresa", str(empresa_id),
-                     {"nombre": req.nombre, "sector": req.sector, "plan": req.plan_type, "limit": monthly_limit},
-                     _get_ip(request))
+                     {"nombre": req.nombre, "plan": req.plan_type, "extra_users": req.extra_users,
+                      "monthly_limit": pricing["monthly_limit"]}, _get_ip(request))
 
-        return {"id": str(empresa_id), "nombre": req.nombre, "sector": req.sector, "plan_type": req.plan_type}
+        return {"id": str(empresa_id), "nombre": req.nombre, "plan_type": req.plan_type, **pricing}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -346,14 +401,14 @@ async def update_empresa(
     request: Request,
     admin: dict = Depends(get_current_admin),
 ):
-    """Actualizar empresa: nombre, sector, plan, limite."""
+    """Actualizar empresa: nombre, sector, plan, extra_users."""
     empresa_updates = {}
     if req.nombre is not None:
         empresa_updates["nombre"] = req.nombre
     if req.sector is not None:
         empresa_updates["sector"] = req.sector
 
-    has_budget_change = req.plan_type is not None or req.monthly_limit is not None
+    has_budget_change = req.plan_type is not None or req.extra_users is not None
 
     if not empresa_updates and not has_budget_change:
         raise HTTPException(status_code=400, detail="Nada que actualizar")
@@ -367,37 +422,46 @@ async def update_empresa(
             )
 
         if has_budget_change:
-            if req.plan_type and req.plan_type not in PLAN_CATALOG:
+            # Leer valores actuales
+            cur = (await db.execute(
+                sql_text("SELECT plan_type, extra_users FROM budget_limits WHERE empresa_id = :eid"),
+                {"eid": empresa_id},
+            )).fetchone()
+            current_plan = cur.plan_type if cur else "start"
+            current_extra = cur.extra_users if cur else 0
+
+            new_plan = req.plan_type or current_plan
+            new_extra = req.extra_users if req.extra_users is not None else current_extra
+
+            if new_plan not in PLAN_CATALOG:
                 raise HTTPException(status_code=400, detail=f"Plan invalido. Opciones: {', '.join(PLAN_CATALOG.keys())}")
 
-            budget_sets = []
-            budget_params = {"eid": empresa_id}
-            if req.plan_type:
-                plan = PLAN_CATALOG[req.plan_type]
-                budget_sets.append("plan_type = :plan")
-                budget_sets.append("max_users = :maxu")
-                budget_params["plan"] = req.plan_type
-                budget_params["maxu"] = plan["max_users"]
-                if req.monthly_limit is None:
-                    budget_sets.append("monthly_limit = :limit")
-                    budget_params["limit"] = plan["monthly_limit"]
-            if req.monthly_limit is not None:
-                budget_sets.append("monthly_limit = :limit")
-                budget_params["limit"] = req.monthly_limit
+            pricing = _calc_pricing(new_plan, new_extra)
 
-            if budget_sets:
-                await db.execute(
-                    sql_text(f"UPDATE budget_limits SET {', '.join(budget_sets)} WHERE empresa_id = :eid"),
-                    budget_params,
-                )
+            await db.execute(
+                sql_text("""
+                    UPDATE budget_limits SET
+                        plan_type = :plan, monthly_limit = :limit, max_users = :maxu,
+                        base_users = :base, extra_users = :extra,
+                        price_per_extra_user = :ppeu, monthly_analyses_limit = :anlimit
+                    WHERE empresa_id = :eid
+                """),
+                {
+                    "eid": empresa_id, "plan": new_plan,
+                    "limit": pricing["monthly_limit"], "maxu": pricing["max_users"],
+                    "base": pricing["base_users"], "extra": pricing["extra_users"],
+                    "ppeu": pricing["price_per_extra_user"],
+                    "anlimit": pricing["monthly_analyses_limit"],
+                },
+            )
 
         await db.commit()
 
     audit = {**empresa_updates}
     if req.plan_type:
         audit["plan_type"] = req.plan_type
-    if req.monthly_limit is not None:
-        audit["monthly_limit"] = req.monthly_limit
+    if req.extra_users is not None:
+        audit["extra_users"] = req.extra_users
     await _audit(admin["admin_id"], "update_empresa", "empresa", empresa_id, audit, _get_ip(request))
 
     return {"updated": True, **audit}
@@ -526,6 +590,82 @@ async def delete_usuario(
     await _audit(admin["admin_id"], "delete_usuario", "usuario", user_id, {}, _get_ip(request))
 
     return {"deleted": True}
+
+
+@router.post("/empresas/{empresa_id}/add-user")
+async def add_extra_user(
+    empresa_id: str,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Agrega un usuario extra. Recalcula max_users y monthly_limit."""
+    async with AsyncSessionLocal() as db:
+        cur = (await db.execute(
+            sql_text("SELECT plan_type, extra_users FROM budget_limits WHERE empresa_id = :eid"),
+            {"eid": empresa_id},
+        )).fetchone()
+        if not cur:
+            raise HTTPException(status_code=404, detail="Empresa sin budget")
+
+        new_extra = (cur.extra_users or 0) + 1
+        pricing = _calc_pricing(cur.plan_type or "start", new_extra)
+
+        await db.execute(
+            sql_text("""
+                UPDATE budget_limits SET
+                    extra_users = :extra, max_users = :maxu,
+                    monthly_limit = :limit, price_per_extra_user = :ppeu
+                WHERE empresa_id = :eid
+            """),
+            {"eid": empresa_id, "extra": new_extra, "maxu": pricing["max_users"],
+             "limit": pricing["monthly_limit"], "ppeu": pricing["price_per_extra_user"]},
+        )
+        await db.commit()
+
+    await _audit(admin["admin_id"], "add_extra_user", "empresa", empresa_id,
+                 {"extra_users": new_extra, "monthly_limit": pricing["monthly_limit"]}, _get_ip(request))
+
+    return {"extra_users": new_extra, **pricing}
+
+
+@router.post("/empresas/{empresa_id}/purchase-analyses")
+async def purchase_analyses(
+    empresa_id: str,
+    data: dict,
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Compra un pack de analisis adicionales."""
+    pack_type = data.get("pack_type", "")
+    pack = ANALYSIS_PACKS.get(pack_type)
+    if not pack:
+        raise HTTPException(status_code=400, detail=f"Pack invalido. Opciones: {', '.join(ANALYSIS_PACKS.keys())}")
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            sql_text("""
+                UPDATE budget_limits
+                SET monthly_analyses_limit = monthly_analyses_limit + :extra
+                WHERE empresa_id = :eid
+                RETURNING monthly_analyses_limit
+            """),
+            {"eid": empresa_id, "extra": pack["analyses"]},
+        )
+        row = result.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Empresa sin budget")
+        await db.commit()
+
+    await _audit(admin["admin_id"], "purchase_analyses", "empresa", empresa_id,
+                 {"pack": pack_type, "analyses_added": pack["analyses"], "price": pack["price"]},
+                 _get_ip(request))
+
+    return {
+        "pack": pack_type,
+        "analyses_added": pack["analyses"],
+        "price": pack["price"],
+        "new_monthly_analyses_limit": row.monthly_analyses_limit,
+    }
 
 
 @router.delete("/empresas/{empresa_id}")

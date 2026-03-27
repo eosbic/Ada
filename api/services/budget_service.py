@@ -158,14 +158,92 @@ PLAN_MODELS = {
         "priority": ["gemini-flash", "qwen-72b"],
     },
     "premium": {
-        "allowed": ["gemini-flash", "qwen-72b", "sonnet", "opus"],
-        "priority": ["qwen-72b", "sonnet", "gemini-flash", "opus"],
+        "allowed": ["gemini-flash", "qwen-72b", "sonnet"],
+        "priority": ["qwen-72b", "sonnet", "gemini-flash"],
     },
     "enterprise": {
         "allowed": ["gemini-flash", "qwen-72b", "sonnet", "opus"],
         "priority": ["opus", "sonnet", "qwen-72b", "gemini-flash"],
     },
 }
+
+
+@dataclass
+class AnalysisStatus:
+    """Estado de analisis de una empresa."""
+    allowed: bool
+    limit: int
+    used: int
+    remaining: int
+    percent: float
+
+
+def check_analyses(empresa_id: str) -> AnalysisStatus:
+    """Verifica si la empresa tiene analisis disponibles."""
+    if not empresa_id:
+        return AnalysisStatus(allowed=True, limit=30, used=0, remaining=30, percent=0)
+
+    try:
+        with sync_engine.connect() as conn:
+            row = conn.execute(
+                sql_text("""
+                    SELECT monthly_analyses_limit, analyses_used_this_month
+                    FROM budget_limits WHERE empresa_id = :eid
+                """),
+                {"eid": empresa_id}
+            ).fetchone()
+
+            if not row:
+                return AnalysisStatus(allowed=True, limit=30, used=0, remaining=30, percent=0)
+
+            limit = int(row.monthly_analyses_limit or 30)
+            used = int(row.analyses_used_this_month or 0)
+            remaining = max(0, limit - used)
+            percent = (used / limit * 100) if limit > 0 else 0
+
+            return AnalysisStatus(
+                allowed=used < limit,
+                limit=limit,
+                used=used,
+                remaining=remaining,
+                percent=round(percent, 1),
+            )
+    except Exception as e:
+        print(f"BUDGET: Error checking analyses: {e}")
+        return AnalysisStatus(allowed=True, limit=30, used=0, remaining=30, percent=0)
+
+
+def log_analysis(empresa_id: str) -> None:
+    """Incrementa analyses_used_this_month en 1."""
+    if not empresa_id:
+        return
+    try:
+        with sync_engine.connect() as conn:
+            conn.execute(
+                sql_text("""
+                    UPDATE budget_limits
+                    SET analyses_used_this_month = analyses_used_this_month + 1
+                    WHERE empresa_id = :eid
+                """),
+                {"eid": empresa_id}
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"BUDGET: Error logging analysis: {e}")
+
+
+def reset_monthly_analyses() -> int:
+    """Resetea analyses_used_this_month para todas las empresas. Retorna filas afectadas."""
+    try:
+        with sync_engine.connect() as conn:
+            result = conn.execute(
+                sql_text("UPDATE budget_limits SET analyses_used_this_month = 0")
+            )
+            conn.commit()
+            return result.rowcount
+    except Exception as e:
+        print(f"BUDGET: Error resetting analyses: {e}")
+        return 0
 
 
 def get_model_for_plan(

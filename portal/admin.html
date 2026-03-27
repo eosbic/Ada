@@ -345,8 +345,9 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(null);
   const [showDelete, setShowDelete] = useState(null);
-  const PLANS = { start: { monthly_limit: 50, max_users: 3 }, pro: { monthly_limit: 70, max_users: 5 }, enterprise: { monthly_limit: 120, max_users: 10 } };
-  const [form, setForm] = useState({ nombre: '', sector: 'generic', plan_type: 'start', monthly_limit: 50 });
+  const PLANS = { start: { monthly_limit: 50, base_users: 3, ppeu: 16.67, analyses: 30 }, premium: { monthly_limit: 70, base_users: 3, ppeu: 23, analyses: 50 }, enterprise: { monthly_limit: 90, base_users: 3, ppeu: 30, analyses: 80 } };
+  const calcPrice = (p,x) => { const pl=PLANS[p]||PLANS.start; return (pl.monthly_limit + (x||0)*pl.ppeu).toFixed(2); };
+  const [form, setForm] = useState({ nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0 });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -362,7 +363,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     try {
       await post('/admin/api/empresas', form);
       setToast({ message: 'Empresa creada', type: 'success' });
-      setShowCreate(false); setForm({ nombre: '', sector: 'generic', plan_type: 'start', monthly_limit: 50 }); load();
+      setShowCreate(false); setForm({ nombre: '', sector: 'generic', plan_type: 'start', extra_users: 0 }); load();
     } catch (e) { setToast({ message: e.message, type: 'error' }); }
   }
 
@@ -386,7 +387,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
     <div>
       <div className="card-header" style={{marginBottom:'1rem'}}>
         <div className="page-title" style={{marginBottom:0}}>Empresas</div>
-        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic',plan_type:'start',monthly_limit:50}); setShowCreate(true); }}>+ Nueva empresa</button>
+        <button className="btn btn-primary" onClick={() => { setForm({nombre:'',sector:'generic',plan_type:'start',extra_users:0}); setShowCreate(true); }}>+ Nueva empresa</button>
       </div>
 
       <div className="search-bar">
@@ -396,7 +397,7 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
       {loading ? <div style={{textAlign:'center',padding:'2rem'}}><span className="spinner" /></div> : (
         <div className="card" style={{padding:0}}>
           <div className="table-wrap"><table>
-            <thead><tr><th>Nombre</th><th>Sector</th><th>Usuarios</th><th>Reportes</th><th>Plan</th><th>Limite</th><th>Creada</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Sector</th><th>Usuarios</th><th>Reportes</th><th>Plan</th><th>$/mes</th><th>Analisis</th><th>Creada</th><th>Acciones</th></tr></thead>
             <tbody>
               {empresas.map(e => (
                 <tr key={e.id}>
@@ -404,18 +405,19 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
                   <td><span className="badge badge-blue">{e.sector}</span></td>
                   <td>{e.user_count}{e.max_users ? <span style={{color:'var(--text3)',fontSize:'.7rem'}}>/{e.max_users}</span> : ''}</td>
                   <td>{e.report_count}</td>
-                  <td><span className={`badge ${e.plan_type==='enterprise'?'badge-green':e.plan_type==='pro'?'badge-blue':'badge-gray'}`}>{e.plan_type || 'N/A'}</span></td>
+                  <td><span className={`badge ${e.plan_type==='enterprise'?'badge-green':e.plan_type==='premium'?'badge-blue':'badge-gray'}`}>{e.plan_type || 'N/A'}</span></td>
                   <td style={{fontFamily:'monospace',fontSize:'.8rem'}}>${e.monthly_limit || 0}</td>
+                  <td style={{fontSize:'.78rem'}}>{e.analyses_used||0}/{e.monthly_analyses_limit||30}</td>
                   <td style={{color:'var(--text3)',fontSize:'.78rem'}}>{e.created_at?.slice(0,10)}</td>
                   <td>
                     <div className="btn-group">
-                      <button className="btn btn-ghost btn-sm" onClick={() => { setForm({nombre:e.nombre,sector:e.sector,plan_type:e.plan_type||'start',monthly_limit:e.monthly_limit||50}); setShowEdit(e); }}>Editar</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => { setForm({nombre:e.nombre,sector:e.sector,plan_type:e.plan_type||'start',extra_users:e.extra_users||0}); setShowEdit(e); }}>Editar</button>
                       <button className="btn btn-danger btn-sm" onClick={() => setShowDelete(e)}>Eliminar</button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {empresas.length === 0 && <tr><td colSpan="8"><div className="empty">Sin empresas</div></td></tr>}
+              {empresas.length === 0 && <tr><td colSpan="9"><div className="empty">Sin empresas</div></td></tr>}
             </tbody>
           </table></div>
         </div>
@@ -430,15 +432,17 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
             </select>
           </div>
           <div className="form-group"><label>Plan</label>
-            <select value={form.plan_type} onChange={e => { const p=e.target.value; setForm({...form, plan_type:p, monthly_limit:PLANS[p].monthly_limit}); }}>
-              <option value="start">Start — $50/mes (3 usuarios)</option>
-              <option value="pro">Pro — $70/mes (5 usuarios)</option>
-              <option value="enterprise">Enterprise — $120/mes (10 usuarios)</option>
+            <select value={form.plan_type} onChange={e => setForm({...form, plan_type:e.target.value})}>
+              <option value="start">Start — $50/mes (gemini+qwen, 30 analisis)</option>
+              <option value="premium">Premium — $70/mes (+sonnet, 50 analisis)</option>
+              <option value="enterprise">Enterprise — $90/mes (+opus, 80 analisis)</option>
             </select>
           </div>
-          <div className="form-group"><label>Limite mensual (USD)</label>
-            <input type="number" step="1" min="1" value={form.monthly_limit} onChange={e => setForm({...form,monthly_limit:parseFloat(e.target.value)||0})} />
-            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>Max usuarios: {PLANS[form.plan_type]?.max_users || 3}</div>
+          <div className="form-group"><label>Usuarios adicionales (sobre 3 base)</label>
+            <input type="number" min="0" max="50" value={form.extra_users} onChange={e => setForm({...form,extra_users:parseInt(e.target.value)||0})} />
+            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>
+              Total usuarios: {3+(form.extra_users||0)} · Precio: ${calcPrice(form.plan_type,form.extra_users)}/mes · Analisis: {PLANS[form.plan_type]?.analyses||30}/mes
+            </div>
           </div>
           <div className="modal-actions">
             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancelar</button>
@@ -456,15 +460,17 @@ function EmpresasPage({ setToast, onSelectEmpresa }) {
             </select>
           </div>
           <div className="form-group"><label>Plan</label>
-            <select value={form.plan_type} onChange={e => { const p=e.target.value; setForm({...form, plan_type:p, monthly_limit:PLANS[p].monthly_limit}); }}>
-              <option value="start">Start — $50/mes (3 usuarios)</option>
-              <option value="pro">Pro — $70/mes (5 usuarios)</option>
-              <option value="enterprise">Enterprise — $120/mes (10 usuarios)</option>
+            <select value={form.plan_type} onChange={e => setForm({...form, plan_type:e.target.value})}>
+              <option value="start">Start — $50/mes (gemini+qwen, 30 analisis)</option>
+              <option value="premium">Premium — $70/mes (+sonnet, 50 analisis)</option>
+              <option value="enterprise">Enterprise — $90/mes (+opus, 80 analisis)</option>
             </select>
           </div>
-          <div className="form-group"><label>Limite mensual (USD)</label>
-            <input type="number" step="1" min="1" value={form.monthly_limit} onChange={e => setForm({...form,monthly_limit:parseFloat(e.target.value)||0})} />
-            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>Max usuarios: {PLANS[form.plan_type]?.max_users || 3}</div>
+          <div className="form-group"><label>Usuarios adicionales (sobre 3 base)</label>
+            <input type="number" min="0" max="50" value={form.extra_users} onChange={e => setForm({...form,extra_users:parseInt(e.target.value)||0})} />
+            <div style={{fontSize:'.72rem',color:'var(--text3)',marginTop:'.3rem'}}>
+              Total usuarios: {3+(form.extra_users||0)} · Precio: ${calcPrice(form.plan_type,form.extra_users)}/mes · Analisis: {PLANS[form.plan_type]?.analyses||30}/mes
+            </div>
           </div>
           <div className="modal-actions">
             <button className="btn btn-ghost" onClick={() => setShowEdit(null)}>Cancelar</button>
@@ -550,16 +556,19 @@ function EmpresaDetailPage({ empresa, setToast, goBack }) {
         <div className="stat-card"><div className="label">Usuarios</div><div className="value accent">{detail.usuarios.length}</div></div>
         <div className="stat-card"><div className="label">Reportes</div><div className="value accent">{reports?.total || 0}</div></div>
         <div className="stat-card"><div className="label">Plan</div><div className="value">{detail.budget?.plan_type || 'N/A'}</div></div>
-        <div className="stat-card"><div className="label">Limite mensual</div><div className="value">${detail.budget?.monthly_limit || 0}</div></div>
-        <div className="stat-card"><div className="label">Max usuarios</div><div className="value">{detail.budget?.max_users || 3}</div></div>
-        <div className="stat-card"><div className="label">Onboarding</div><div className="value">{detail.profile?.onboarding_completed ? <span style={{color:'var(--green)'}}>Completo</span> : <span style={{color:'var(--yellow)'}}>Pendiente</span>}</div></div>
+        <div className="stat-card"><div className="label">Precio/mes</div><div className="value">${detail.budget?.monthly_limit || 0}</div></div>
+        <div className="stat-card"><div className="label">Usuarios</div><div className="value">{detail.usuarios.length}/{detail.budget?.max_users || 3}</div></div>
+        <div className="stat-card"><div className="label">Analisis</div><div className="value">{detail.budget?.analyses_used || 0}/{detail.budget?.monthly_analyses_limit || 30}</div></div>
       </div>
 
       {/* Usuarios */}
       <div className="card">
         <div className="card-header">
           <div className="card-title">Usuarios ({detail.usuarios.length})</div>
-          <button className="btn btn-primary btn-sm" onClick={() => { setUserForm({nombre:'',email:'',password:'',rol:'member'}); setShowCreateUser(true); }}>+ Nuevo usuario</button>
+          <div className="btn-group">
+            <button className="btn btn-ghost btn-sm" onClick={async()=>{try{const r=await api(`/admin/api/empresas/${empresa.id}/add-user`,{method:'POST',body:{}});setToast({message:`Usuario extra agregado. Max: ${r.max_users}, Precio: $${r.monthly_limit}/mes`,type:'success'});load();}catch(e){setToast({message:e.message,type:'error'});}}}>+ Usuario extra</button>
+            <button className="btn btn-primary btn-sm" onClick={() => { setUserForm({nombre:'',email:'',password:'',rol:'member'}); setShowCreateUser(true); }}>+ Nuevo usuario</button>
+          </div>
         </div>
         <div className="table-wrap"><table>
           <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Telegram</th><th>Creado</th><th>Acciones</th></tr></thead>
@@ -582,6 +591,18 @@ function EmpresaDetailPage({ empresa, setToast, goBack }) {
             {detail.usuarios.length === 0 && <tr><td colSpan="6"><div className="empty">Sin usuarios</div></td></tr>}
           </tbody>
         </table></div>
+      </div>
+
+      {/* Packs de analisis */}
+      <div className="card" style={{marginBottom:'1rem'}}>
+        <div className="card-header">
+          <div className="card-title">Comprar analisis adicionales</div>
+        </div>
+        <div style={{display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
+          {[['basic_pack','20 analisis','$8'],['pro_pack','50 analisis','$15'],['mega_pack','150 analisis','$35']].map(([pk,desc,price])=>(
+            <button key={pk} className="btn btn-ghost btn-sm" onClick={async()=>{try{const r=await api(`/admin/api/empresas/${empresa.id}/purchase-analyses`,{method:'POST',body:{pack_type:pk}});setToast({message:`Pack comprado: +${r.analyses_added} analisis (nuevo limite: ${r.new_monthly_analyses_limit})`,type:'success'});load();}catch(e){setToast({message:e.message,type:'error'});}}}>{desc} — {price}</button>
+          ))}
+        </div>
       </div>
 
       {/* Reportes */}

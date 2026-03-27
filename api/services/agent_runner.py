@@ -20,7 +20,7 @@ from api.agents.consolidation_agent import consolidation_agent
 from api.agents.generic_pm_agent import generic_pm_agent
 from api.agents.entity_360_agent import entity_360_agent
 
-from api.services.budget_service import check_budget, get_model_for_plan, log_usage
+from api.services.budget_service import check_budget, get_model_for_plan, log_usage, check_analyses, log_analysis
 from api.services.semantic_firewall import evaluate_semantic_firewall
 from api.services.tool_orchestrator import collect_multi_source_context
 from api.services.response_policy import enforce_response_contract
@@ -223,6 +223,7 @@ async def run_agent(
     # 1.5) Budget check
     budget_status = check_budget(empresa_id) if empresa_id else None
     budget_override = None
+    analyses_exhausted = False
     if budget_status and budget_status.is_downgraded:
         budget_override = budget_status.forced_model
 
@@ -289,6 +290,16 @@ async def run_agent(
         if plan_downgraded:
             budget_override = plan_model
 
+    # 3.6) Analysis limit check (solo para tareas de analisis)
+    analysis_tasks = ("excel_analysis", "document_analysis")
+    current_task_type = AGENT_TASK_MAP.get(routed_to, "chat")
+    if current_task_type in analysis_tasks and empresa_id:
+        analysis_status = check_analyses(empresa_id)
+        if not analysis_status.allowed:
+            analyses_exhausted = True
+            budget_override = "gemini-flash"
+            print(f"RUNNER: Empresa {empresa_id[:8]} agoto analisis ({analysis_status.used}/{analysis_status.limit}), degradando a gemini-flash")
+
     # Enriquecer mensaje con contexto conversacional para agentes que no manejan historial
     enriched_message = message
     if empresa_id and user_id and routed_to in ("project_agent", "notion_agent", "calendar_agent", "generic_pm_agent"):
@@ -332,6 +343,13 @@ async def run_agent(
 
     response = agent_result.get("response", "No pude procesar tu mensaje.")
     model_used = agent_result.get("model_used", "unknown")
+
+    # 4.4) Log analysis count
+    if current_task_type in analysis_tasks and empresa_id:
+        try:
+            log_analysis(empresa_id)
+        except Exception as e:
+            print(f"RUNNER: Error logging analysis: {e}")
 
     # 4.5) Log token usage
     if empresa_id and budget_status:

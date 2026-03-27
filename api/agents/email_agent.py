@@ -162,11 +162,23 @@ async def execute_email_action(state: EmailState) -> dict:
         if not to:
             return {"response": "Necesito la dirección de email del destinatario. ¿A quién le envío?"}
 
+        # Buscar preferencias de escritura para este contacto
+        contact_prefs = ""
+        if to and empresa_id and user_id:
+            try:
+                from api.services.user_memory_service import get_contact_preferences
+                contact_prefs = get_contact_preferences(empresa_id, user_id, to)
+            except Exception:
+                pass
+
         # Si no hay subject o body, generar con LLM
         if not subject or not body:
             model, _ = selector.get_model("email_draft")
+            draft_system = "Genera un email profesional en español. Responde JSON: {\"subject\": \"...\", \"body\": \"...\"}"
+            if contact_prefs:
+                draft_system += f"\n\nPREFERENCIAS DEL USUARIO PARA ESTE CONTACTO:\n{contact_prefs}\nAplica estas preferencias al redactar."
             gen = await model.ainvoke([
-                {"role": "system", "content": "Genera un email profesional en español. Responde JSON: {\"subject\": \"...\", \"body\": \"...\"}"},
+                {"role": "system", "content": draft_system},
                 {"role": "user", "content": f"Para: {to}. Contexto: {state['message']}"},
             ])
             try:
@@ -186,6 +198,8 @@ async def execute_email_action(state: EmailState) -> dict:
         if "error" in result:
             return {"response": f"Error creando borrador: {result['error']}"}
 
+        original_draft_text = f"Para: {to}\nAsunto: {subject}\n\n{body}"
+
         return {
             "response": (
                 f"✉️ Borrador creado:\n\n"
@@ -196,6 +210,7 @@ async def execute_email_action(state: EmailState) -> dict:
             ),
             "needs_approval": True,
             "draft_id": result["draft_id"],
+            "original_draft": original_draft_text,
             "action_result": result,
         }
 

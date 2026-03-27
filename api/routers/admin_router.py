@@ -1009,3 +1009,30 @@ async def audit_log(
             for r in rows
         ],
     }
+
+
+@router.get("/users/{user_id}/memories")
+async def list_user_memories(user_id: str, admin: dict = Depends(get_current_admin)):
+    """Lista memorias de un usuario."""
+    from api.services.user_memory_service import get_all_memories
+
+    async with AsyncSessionLocal() as db:
+        user = (await db.execute(
+            sql_text("SELECT empresa_id FROM usuarios WHERE id = :uid"), {"uid": user_id}
+        )).fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    memories = get_all_memories(str(user.empresa_id), user_id)
+    return {"user_id": user_id, "count": len(memories), "memories": memories}
+
+
+@router.delete("/memories/{memory_id}")
+async def delete_memory(memory_id: str, request: Request, admin: dict = Depends(get_current_admin)):
+    """Elimina (desactiva) una memoria."""
+    from api.services.user_memory_service import deactivate_memory
+
+    deactivate_memory(memory_id)
+    await _audit(admin["admin_id"], "delete_memory", "memory", memory_id, {}, _get_ip(request))
+    return {"deleted": True}

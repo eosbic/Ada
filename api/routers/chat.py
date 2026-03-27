@@ -229,6 +229,42 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                 "intent": "action",
                 "model_used": "hitl",
             }
+        elif pending.get("type") == "email_send" and _looks_like_edit(message, pending):
+            # El usuario editó el borrador — aprender de las diferencias
+            original = pending.get("original_draft", "")
+            if original:
+                try:
+                    from api.services.user_memory_service import extract_correction_learnings
+                    to_addr = pending.get("to", "")
+                    context = f"Email dirigido a: {to_addr}"
+                    await extract_correction_learnings(empresa_id, user_id, original, message, context)
+                except Exception as e:
+                    print(f"HITL: Error extrayendo correcciones: {e}")
+
+            # Crear nuevo borrador con la versión editada y enviar
+            _resolve_pending(pending["id"], "edited")
+            try:
+                from api.services.gmail_service import gmail_draft, gmail_send
+                edited_parts = _parse_edited_email(message, pending)
+                draft_result = gmail_draft(
+                    to=edited_parts["to"],
+                    subject=edited_parts["subject"],
+                    body=edited_parts["body"],
+                    empresa_id=empresa_id,
+                    user_id=user_id,
+                )
+                if draft_result.get("draft_id"):
+                    send_result = gmail_send(draft_result["draft_id"], empresa_id=empresa_id, user_id=user_id)
+                    return {
+                        "response": f"Email editado y enviado a {edited_parts['to']}. Aprendí de tus correcciones para la próxima vez.",
+                        "intent": "email",
+                        "model_used": "hitl_learning",
+                    }
+                else:
+                    return {"response": f"Error creando borrador editado: {draft_result.get('error', 'desconocido')}", "intent": "email", "model_used": "hitl"}
+            except Exception as e:
+                print(f"HITL: Error enviando email editado: {e}")
+                return {"response": f"Error enviando el email editado: {e}", "intent": "email", "model_used": "hitl"}
         else:
             # Si escribe otra cosa, cancelar pendiente y procesar normal
             _clear_pending(empresa_id, user_id)
@@ -257,7 +293,49 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
         _save_pending(empresa_id, user_id, "email_send", {
             "draft_id": result["draft_id"],
             "to": to_addr,
+            "original_draft": result.get("original_draft", ""),
         })
         print(f"HITL: Aprobacion pendiente para {empresa_id[:8]}::{user_id[:8]} -> draft_id={result['draft_id']}")
 
     return result
+
+
+def _looks_like_edit(message: str, pending: dict) -> bool:
+    """Detecta si el mensaje del usuario parece una versión editada del borrador."""
+    msg_lower = message.lower().strip()
+    has_email_structure = any(marker in msg_lower for marker in ["para:", "asunto:", "subject:", "to:"])
+    is_substantial = len(message) > 50
+    not_command = not _is_approval(message) and not _is_rejection(message)
+    return (has_email_structure or is_substantial) and not_command and pending.get("type") == "email_send"
+
+
+def _parse_edited_email(message: str, pending: dict) -> dict:
+    """Extrae to, subject, body de un email editado por el usuario."""
+    lines = message.strip().split("\n")
+    to = pending.get("to", "")
+    subject = ""
+    body_lines = []
+    body_started = False
+
+    for line in lines:
+        lower = line.lower().strip()
+        if lower.startswith(("para:", "to:")):
+            to = line.split(":", 1)[1].strip()
+        elif lower.startswith(("asunto:", "subject:")):
+            subject = line.split(":", 1)[1].strip()
+        elif body_started or (not lower.startswith(("para:", "to:", "asunto:", "subject:")) and line.strip()):
+            body_started = True
+            body_lines.append(line)
+
+    return {
+        "to": to,
+        "subject": subject or "Sin asunto",
+        "body": "\n".join(body_lines).strip() or message,
+    }
+
+
+@router.get("/memories")
+async def my_memories(empresa_id: str, user_id: str):
+    """Memorias del usuario."""
+    from api.services.user_memory_service import get_all_memories
+    return {"memories": get_all_memories(empresa_id, user_id)}

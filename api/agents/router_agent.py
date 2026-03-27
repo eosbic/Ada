@@ -38,6 +38,8 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "action" -> Ejecutar accion concreta
 - "briefing" -> Briefing ejecutivo o resumen diario, "dame el brief de hoy"
 - "configure_brief" -> Activar, desactivar o cambiar hora del brief diario: "activa el brief a las 6am", "desactiva el brief", "cambia el brief a las 9", "envíame el brief todos los dias a las 7"
+- "my_memories" -> El usuario pregunta qué sabe Ada de él: "qué sabes de mí", "qué recuerdas", "qué has aprendido de mí", "que sabes de mi"
+- "explicit_memory" -> El usuario pide que Ada recuerde algo: "recuerda que", "ten en cuenta que", "no olvides que", "anota que"
 - "conversational" -> Saludo, charla casual o pregunta general
 
 DIFERENCIA CLAVE:
@@ -83,6 +85,8 @@ INTENT_AGENT_MAP = {
     "conversational": "chat_agent",
     "briefing": "morning_brief_agent",
     "configure_brief": "chat_agent",
+    "my_memories": "chat_agent",
+    "explicit_memory": "chat_agent",
 }
 
 
@@ -101,6 +105,21 @@ async def classify_intent(state: RouterState) -> dict:
             "confidence": 1.0,
             "routed_to": "chat_agent",
         }
+
+    # WHITELIST: "qué sabes de mí"
+    memory_patterns = [
+        "qué sabes de mí", "que sabes de mi", "qué recuerdas de mí", "que recuerdas de mi",
+        "qué has aprendido de mí", "que has aprendido de mi", "qué sabes de mi",
+    ]
+    if any(p in msg_lower for p in memory_patterns):
+        print(f"ROUTER: my_memories detected")
+        return {"intent": "my_memories", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # WHITELIST: "recuerda que..."
+    explicit_prefixes = ["recuerda que ", "ten en cuenta que ", "no olvides que ", "anota que "]
+    if any(msg_lower.startswith(p) for p in explicit_prefixes):
+        print(f"ROUTER: explicit_memory detected")
+        return {"intent": "explicit_memory", "confidence": 1.0, "routed_to": "chat_agent"}
 
     model, _ = selector.get_model("routing")
 

@@ -87,6 +87,16 @@ class ChatState(TypedDict, total=False):
 
 SYSTEM_PROMPT = """Eres Ada, asesora ejecutiva de {empresa_nombre} ({sector}). Conoces este negocio: {company_dna_summary}.
 
+PERSONALIDAD:
+- Hablas como una persona real, no como un asistente de IA. Tienes opiniones, experiencia y criterio.
+- Tu tono es el de una colega senior de confianza: directa, cálida, y sin miedo a decir lo incómodo.
+- Si algo va mal, lo dices sin rodeos. Si algo va bien, lo celebras brevemente y pasas a lo que sigue.
+- Usas lenguaje natural: "Eso va bajando feo" en vez de "Se observa una tendencia decreciente".
+- Humor sutil cuando el momento lo permite, nunca cuando el tema es serio.
+- Recuerdas lo que el usuario te ha contado y lo usas naturalmente.
+- Nunca dices "como IA", "como asistente", "no tengo emociones" — tú ERES Ada, punto.
+- Espejea el estilo del usuario: si tutea, tutéalo. Si habla formal, responde formal.
+
 REGLAS DE COMPORTAMIENTO:
 
 1. OPINA PRIMERO, EXPLICA DESPUÉS. Nunca abras con "según los datos". Abre con tu conclusión: "Las ventas van mal" o "Este mes fue sólido". Después muestra los números que respaldan.
@@ -435,11 +445,45 @@ async def generate_response(state: ChatState) -> dict:
             "sources_used": state.get("sources_used", []),
         }
 
+    empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
+
+    # Intent: ¿qué sabes de mí?
+    if state.get("intent") == "my_memories":
+        try:
+            from api.services.user_memory_service import load_user_memories
+            memories_block = load_user_memories(empresa_id, user_id)
+            if memories_block:
+                response_text = f"Esto es lo que he aprendido de ti:\n\n{memories_block}"
+            else:
+                response_text = "Aún no he aprendido mucho — llevamos poco tiempo trabajando juntos. Con cada conversación voy entendiendo mejor tus prioridades."
+        except Exception:
+            response_text = "Aún no he aprendido mucho — llevamos poco tiempo trabajando juntos."
+        return {"response": response_text, "model_used": "memory", "sources_used": []}
+
+    # Intent: recuerda que [X]
+    if state.get("intent") == "explicit_memory":
+        msg = state.get("message", "")
+        fact = msg
+        for prefix in ["recuerda que ", "ten en cuenta que ", "no olvides que ", "anota que "]:
+            if msg.lower().startswith(prefix):
+                fact = msg[len(prefix):].strip()
+                break
+
+        if fact and len(fact) > 5:
+            try:
+                from api.services.user_memory_service import save_memory
+                save_memory(empresa_id, user_id, fact, category="context", source="explicit")
+                response_text = "Listo, lo tengo."
+            except Exception:
+                response_text = "Listo, lo tengo."
+        else:
+            response_text = "¿Qué quieres que recuerde?"
+        return {"response": response_text, "model_used": "memory", "sources_used": []}
+
     message = state.get("message", "")
     context = state.get("context", "Sin contexto previo.")
     personalized = state.get("personalized", "")
-    empresa_id = state.get("empresa_id", "")
-    user_id = state.get("user_id", "")
 
     # Cargar DNA para personalizar system prompt
     empresa_nombre = "la empresa"
@@ -491,6 +535,15 @@ async def generate_response(state: ChatState) -> dict:
     if personalized:
         system = personalized + "\n\n" + system
 
+    # Inyectar memorias del usuario
+    try:
+        from api.services.user_memory_service import load_user_memories
+        user_memories_block = load_user_memories(empresa_id, user_id)
+        if user_memories_block:
+            system += f"\n\n## LO QUE SABES DE ESTE USUARIO\n{user_memories_block}\n\nUsa este conocimiento naturalmente. No menciones que 'recuerdas' — simplemente aplica lo que sabes."
+    except Exception as e:
+        print(f"CHAT: Error cargando user memories: {e}")
+
     # Construir mensajes con historial conversacional real
     messages = [{"role": "system", "content": system}]
 
@@ -535,6 +588,14 @@ async def save_to_memory(state: ChatState) -> dict:
             save_history(empresa_id, user_id, history)
         except Exception as e:
             print(f"CHAT: Error persistiendo historial: {e}")
+
+    # Extraer hechos sobre el usuario
+    if empresa_id and user_id and message and response:
+        try:
+            from api.services.user_memory_service import extract_user_facts
+            await extract_user_facts(empresa_id, user_id, message, response)
+        except Exception as e:
+            print(f"CHAT: Error extrayendo user facts: {e}")
 
     return {}
 

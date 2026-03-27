@@ -494,13 +494,22 @@ async def generate_response(state: ChatState) -> dict:
     if state.get("intent") == "onboarding":
         try:
             from api.agents.onboarding_agent import process_onboarding
+            # Resolver nombre para onboarding
+            _onb_name = ""
+            try:
+                with sync_engine.connect() as conn:
+                    _onb_row = conn.execute(sql_text("SELECT nombre FROM usuarios WHERE id = :uid"), {"uid": user_id}).fetchone()
+                    if _onb_row:
+                        _onb_name = _onb_row.nombre or ""
+            except Exception:
+                pass
             async with AsyncSessionLocal() as db:
                 result = await process_onboarding(
                     db=db,
                     empresa_id=empresa_id,
                     user_id=user_id,
-                    user_name="",
-                    user_response="",
+                    user_name=_onb_name,
+                    user_response=state.get("message", ""),
                 )
             return {
                 "response": result.get("message", "Iniciemos la configuración de tu empresa."),

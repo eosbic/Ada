@@ -93,6 +93,15 @@ INTENT_AGENT_MAP = {
 
 
 async def classify_intent(state: RouterState) -> dict:
+    # PRIORIDAD MÁXIMA: Si hay sesión de onboarding activa, TODO va a onboarding
+    from api.agents.onboarding_agent import _onboarding_sessions
+    empresa_id = state.get("empresa_id", "")
+    if empresa_id and empresa_id in _onboarding_sessions:
+        session = _onboarding_sessions[empresa_id]
+        if session.get("step") != "welcome":
+            print(f"ROUTER: Onboarding session active (step={session['step']}) -> forcing onboarding")
+            return {"intent": "onboarding", "confidence": 1.0, "routed_to": "chat_agent"}
+
     # WHITELIST: saludos siempre van a conversational
     msg_lower = (state.get("message", "") or "").lower().strip()
     greeting_patterns = [

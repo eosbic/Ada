@@ -51,9 +51,17 @@ def parse_file(state: ExcelState) -> dict:
             xls = pd.ExcelFile(BytesIO(data))
             raw = {}
             for sheet in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet).dropna(how="all")
-                df.columns = [str(c).strip() for c in df.columns]
-                raw[sheet] = {"rows": len(df), "columns": list(df.columns), "dtypes": {c: str(df[c].dtype) for c in df.columns}, "data": df.to_dict(orient="records")}
+                try:
+                    df = pd.read_excel(xls, sheet_name=sheet).dropna(how="all")
+                    if len(df) == 0:
+                        continue
+                    df.columns = [str(c).strip() for c in df.columns]
+                    for col in df.select_dtypes(include=["bool"]).columns:
+                        df[col] = df[col].astype(int)
+                    raw[sheet] = {"rows": len(df), "columns": list(df.columns), "dtypes": {c: str(df[c].dtype) for c in df.columns}, "data": df.to_dict(orient="records")}
+                except Exception as sheet_err:
+                    print(f"EXCEL: Error procesando hoja '{sheet}': {sheet_err}")
+                    continue
             print(f"DEBUG PARSE RAW: {len(raw)} hojas, keys={list(raw.keys())}")
             return {"raw_data": raw}
     except Exception as e:
@@ -68,6 +76,9 @@ def calculate_metrics(state: ExcelState) -> dict:
     calcs = {}
     for sheet, sdata in state["raw_data"].items():
         df = pd.DataFrame(sdata["data"])
+        for col in df.columns:
+            if df[col].dtype == "bool":
+                df[col] = df[col].astype(int)
         sheet_calcs = {}
         for col in df.select_dtypes(include=[np.number]).columns:
             s = df[col].dropna()
@@ -87,20 +98,23 @@ def calculate_metrics(state: ExcelState) -> dict:
 
 def _retail_metrics(df) -> dict:
     m = {}
-    cols = _fuzzy_match(df, {"venta": ["venta", "ventas", "total_venta", "valor_venta", "monto", "total", "valor_pagado"], "costo": ["costo", "costos", "costo_total", "valor_costo"], "cliente": ["cliente", "nombre_cliente", "razon_social"], "vendedor": ["vendedor", "asesor", "ejecutivo", "gestor_ventas"], "producto": ["producto", "item", "referencia", "sku", "descripcion", "curso"]})
-    if "venta" in cols and "costo" in cols:
-        df["_margen"] = df[cols["venta"]] - df[cols["costo"]]
-        margen_pct = (df["_margen"] / df[cols["venta"]] * 100).replace([np.inf, -np.inf], np.nan)
-        m["margen_promedio_pct"] = round(float(margen_pct.mean()), 2)
-        negativos = df[df["_margen"] < 0]
-        if "producto" in cols and len(negativos) > 0:
-            m["productos_margen_negativo"] = negativos[cols["producto"]].unique().tolist()[:10]
-    if "cliente" in cols and "venta" in cols:
-        top = df.groupby(cols["cliente"])[cols["venta"]].sum().nlargest(10)
-        m["top_10_clientes"] = {str(k): round(float(v), 2) for k, v in top.items()}
-    if "vendedor" in cols and "venta" in cols:
-        ranking = df.groupby(cols["vendedor"])[cols["venta"]].sum().sort_values(ascending=False)
-        m["ranking_vendedores"] = {str(k): round(float(v), 2) for k, v in ranking.items()}
+    try:
+        cols = _fuzzy_match(df, {"venta": ["venta", "ventas", "total_venta", "valor_venta", "monto", "total", "valor_pagado"], "costo": ["costo", "costos", "costo_total", "valor_costo"], "cliente": ["cliente", "nombre_cliente", "razon_social"], "vendedor": ["vendedor", "asesor", "ejecutivo", "gestor_ventas"], "producto": ["producto", "item", "referencia", "sku", "descripcion", "curso"]})
+        if "venta" in cols and "costo" in cols:
+            df["_margen"] = df[cols["venta"]] - df[cols["costo"]]
+            margen_pct = (df["_margen"] / df[cols["venta"]] * 100).replace([np.inf, -np.inf], np.nan)
+            m["margen_promedio_pct"] = round(float(margen_pct.mean()), 2)
+            negativos = df[df["_margen"] < 0]
+            if "producto" in cols and len(negativos) > 0:
+                m["productos_margen_negativo"] = negativos[cols["producto"]].unique().tolist()[:10]
+        if "cliente" in cols and "venta" in cols:
+            top = df.groupby(cols["cliente"])[cols["venta"]].sum().nlargest(10)
+            m["top_10_clientes"] = {str(k): round(float(v), 2) for k, v in top.items()}
+        if "vendedor" in cols and "venta" in cols:
+            ranking = df.groupby(cols["vendedor"])[cols["venta"]].sum().sort_values(ascending=False)
+            m["ranking_vendedores"] = {str(k): round(float(v), 2) for k, v in ranking.items()}
+    except Exception as e:
+        print(f"EXCEL: Error en _retail_metrics: {e}")
     return m
 
 
@@ -145,8 +159,10 @@ def smart_sampling(state: ExcelState) -> dict:
             s = df[col].dropna()
             if len(s) < 5: continue
             q25 = s.quantile(0.25); q75 = s.quantile(0.75); iqr = q75 - q25
-            mask = (s < q25 - 1.5 * iqr) | (s > q75 + 1.5 * iqr)
-            for r in df[mask].head(5).to_dict("records"):
+            lower = q25 - 1.5 * iqr; upper = q75 + 1.5 * iqr
+            mask = (df[col] < lower) | (df[col] > upper)
+            outlier_rows = df[mask.fillna(False)].head(5)
+            for r in outlier_rows.to_dict("records"):
                 r["_src"] = f"{sheet}:outlier:{col}"; rows.append(r)
                 anomalies.append({"sheet": sheet, "column": col, "value": r.get(col), "type": "outlier"})
     print(f"EXCEL: Sample {len(rows)} filas, {len(anomalies)} anomalías")

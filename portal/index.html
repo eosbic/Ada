@@ -1647,9 +1647,9 @@ function Chat({ addToast }) {
         }
       } else {
         // Solo texto, enviar a /chat/chat
-        const resp = await fetch(`${API_URL}/chat/chat`, {
+        const resp = await apiFetch(`${API_URL}/chat/chat`, {
           method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},
+          headers:{'Content-Type':'application/json'},
           body:JSON.stringify({empresa_id:MOCK_USER.empresa_id,user_id:MOCK_USER.user_id,message:currentText})
         });
         if (resp.ok) {
@@ -1852,7 +1852,7 @@ function Vault({ onNav }) {
               statusDiv.style.cssText='position:fixed;top:20px;right:20px;padding:14px 20px;background:#101828;border:1px solid var(--accent);border-radius:8px;color:#00e5ff;font-family:monospace;font-size:14px;z-index:9999;';
               statusDiv.textContent='📤 Subiendo y analizando archivo...';
               document.body.appendChild(statusDiv);
-              const r=await fetch('https://backend-ada.duckdns.org/files/upload',{method:'POST',headers:{'Authorization':'Bearer '+(MOCK_USER.token||'')},body:fd});
+              const r=await apiFetch('https://backend-ada.duckdns.org/files/upload',{method:'POST',body:fd});
               const d=await r.json();
               if(uploadBtn)uploadBtn.style.opacity='1';
               const st=document.getElementById('upload-status');
@@ -2133,7 +2133,7 @@ function Approvals({ addToast }) {
   const act = async (id, action) => {
     const item = approvals.find(a=>a.id===id);
     if(item?.thread_id){
-      try{await fetch(`https://backend-ada.duckdns.org/api/v1/resume/${item.thread_id}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},body:JSON.stringify({action:action})});}catch(e){console.error(e);}
+      try{await apiFetch(`https://backend-ada.duckdns.org/api/v1/resume/${item.thread_id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})});}catch(e){console.error(e);}
     }
     setApprovals(prev=>prev.filter(a=>a.id!==id));
     addToast(`Acción ${action==='approve'?'aprobada':'rechazada'}`, action==='approve'?'success':'error');
@@ -2539,11 +2539,11 @@ function Settings({ theme, setTheme }) {
         }
       }catch(e){console.error(e);}
       try{
-        const r2=await fetch(`https://backend-ada.duckdns.org/config/dna/${MOCK_USER.empresa_id}`,{headers:{'Authorization':'Bearer '+(MOCK_USER.token||'')}});
+        const r2=await apiFetch(`https://backend-ada.duckdns.org/config/dna/${MOCK_USER.empresa_id}`);
         if(r2.ok){const d2=await r2.json();setCustomPrompt(d2.custom_prompt||'');}
       }catch(e){}
       try{
-        const r3=await fetch(`https://backend-ada.duckdns.org/usuarios/preferences`,{headers:{'Authorization':'Bearer '+(MOCK_USER.token||'')}});
+        const r3=await apiFetch(`https://backend-ada.duckdns.org/usuarios/preferences`);
         if(r3.ok){const d3=await r3.json();const p=d3.preferences||{};setBriefEnabled(!!p.morning_brief_enabled);setBriefHour(p.morning_brief_hour||7);setBriefTz(p.morning_brief_timezone||'America/Bogota');}
       }catch(e){}
     }; load();
@@ -2590,7 +2590,7 @@ function Settings({ theme, setTheme }) {
               <button className="btn btn-primary" style={{marginTop:'8px'}} onClick={async()=>{
                 const val=customPrompt;
                 try{
-                  const r=await fetch('https://backend-ada.duckdns.org/config/dna/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},body:JSON.stringify({empresa_id:MOCK_USER.empresa_id,fields:{custom_prompt:val}})});
+                  const r=await apiFetch('https://backend-ada.duckdns.org/config/dna/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({empresa_id:MOCK_USER.empresa_id,fields:{custom_prompt:val}})});
                   if(r.ok){alert('Instrucciones guardadas ✅');}else{alert('Error guardando');}
                 }catch(e){alert('Error de conexión');}
               }}>Guardar Instrucciones</button>
@@ -2631,7 +2631,7 @@ function Settings({ theme, setTheme }) {
                       if(!apiKey)return;
                       const body={empresa_id:MOCK_USER.empresa_id,service:s.service,credentials:{api_key:apiKey}};
                       if(s.service==='plane'){body.credentials.workspace=prompt('Workspace de Plane:')||'';body.credentials.base_url='https://api.plane.so/api/v1';}
-                      try{const r=await fetch('https://backend-ada.duckdns.org/oauth/connect-service',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},body:JSON.stringify(body)});const d=await r.json();alert(d.message||d.detail||'Error');setConnections(p=>({...p,[s.service]:{connected:true,since:new Date().toISOString().slice(0,10)}}));}catch(e){alert('Error conectando');}
+                      try{const r=await apiFetch('https://backend-ada.duckdns.org/oauth/connect-service',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message||d.detail||'Error');setConnections(p=>({...p,[s.service]:{connected:true,since:new Date().toISOString().slice(0,10)}}));}catch(e){alert('Error conectando');}
                     }}>Conectar</button>
                   ):(
                     <button className="btn btn-ghost btn-sm" onClick={async()=>{
@@ -2679,7 +2679,7 @@ function Settings({ theme, setTheme }) {
             <button disabled={briefSaving} style={{padding:'8px 20px',background:'var(--accent)',color:'var(--bg-base)',border:'none',borderRadius:'var(--r-md)',fontWeight:'600',fontSize:'14px',cursor:'pointer'}} onClick={async()=>{
               setBriefSaving(true); setBriefMsg('');
               try{
-                const r=await fetch('https://backend-ada.duckdns.org/usuarios/preferences',{method:'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(MOCK_USER.token||'')},body:JSON.stringify({preferences:{morning_brief_enabled:briefEnabled,morning_brief_hour:briefHour,morning_brief_timezone:briefTz}})});
+                const r=await apiFetch('https://backend-ada.duckdns.org/usuarios/preferences',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferences:{morning_brief_enabled:briefEnabled,morning_brief_hour:briefHour,morning_brief_timezone:briefTz}})});
                 if(r.ok){setBriefMsg('✅ Preferencias guardadas');}else{const d=await r.json();setBriefMsg('❌ '+(d.detail||'Error'));}
               }catch(e){setBriefMsg('❌ Error de conexión');}
               setBriefSaving(false);
@@ -2900,6 +2900,38 @@ function saveSession(data){try{localStorage.setItem('ada_session',JSON.stringify
 function loadSession(){try{const s=localStorage.getItem('ada_session');return s?JSON.parse(s):null;}catch(e){return null;}}
 function clearSession(){try{localStorage.removeItem('ada_session');}catch(e){}}
 
+async function refreshAccessToken() {
+  const session = loadSession();
+  if (!session || !session.refresh_token) return null;
+  try {
+    const r = await fetch('https://backend-ada.duckdns.org/auth/refresh',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({refresh_token:session.refresh_token})
+    });
+    if (!r.ok) { clearSession(); return null; }
+    const data = await r.json();
+    MOCK_USER.token = data.access_token;
+    session.token = data.access_token;
+    if (data.refresh_token) session.refresh_token = data.refresh_token;
+    saveSession(session);
+    return data.access_token;
+  } catch(e) { console.error('Refresh token failed:', e); return null; }
+}
+
+async function apiFetch(url, options = {}) {
+  if (!options.headers) options.headers = {};
+  if (MOCK_USER.token) options.headers['Authorization'] = 'Bearer ' + MOCK_USER.token;
+  let r = await fetch(url, options);
+  if (r.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      options.headers['Authorization'] = 'Bearer ' + newToken;
+      r = await fetch(url, options);
+    }
+  }
+  return r;
+}
+
 function App() {
   const saved = loadSession();
   // Restore session IMMEDIATELY before any render
@@ -2911,6 +2943,7 @@ function App() {
     MOCK_USER.initials=saved.initials||'--';
     MOCK_USER.empresa=saved.empresa||'';
     MOCK_USER.token=saved.token||'';
+    MOCK_USER.refreshToken=saved.refresh_token||'';
   }
   const [theme, setTheme] = useState(saved?.theme||'void');
   const [loggedIn, setLoggedIn] = useState(!!saved);
@@ -2940,6 +2973,16 @@ function App() {
     return ()=>clearInterval(id);
   }, []);
 
+  // Auto-refresh token cada 50 min
+  useEffect(() => {
+    if (!loggedIn) return;
+    const interval = setInterval(async () => {
+      const t = await refreshAccessToken();
+      if (!t) { clearSession(); setLoggedIn(false); }
+    }, 50*60*1000);
+    return () => clearInterval(interval);
+  }, [loggedIn]);
+
   const addToast = useCallback((msg, type='info') => {
     const id = Date.now();
     setToasts(t=>[...t,{id,msg,type}]);
@@ -2955,11 +2998,13 @@ function App() {
       if(r.ok) {
         const data = await r.json();
         const token = data.access_token;
+        const refreshToken = data.refresh_token || '';
         // Decode JWT payload to get user_id and empresa_id
         const payload = JSON.parse(atob(token.split('.')[1]));
         MOCK_USER.empresa_id = payload.empresa_id || '';
         MOCK_USER.user_id = payload.user_id || '';
         MOCK_USER.token = token;
+        MOCK_USER.refreshToken = refreshToken;
         // Fetch user profile
         try {
           const profileR = await fetch(`https://backend-ada.duckdns.org/team/members?empresa_id=${MOCK_USER.empresa_id}`);
@@ -2998,7 +3043,7 @@ function App() {
           }
         } catch(e) { console.log('Onboarding check error:', e); }
         setLoginStatus({msg:'Acceso concedido',type:'ok'});
-        saveSession({empresa_id:MOCK_USER.empresa_id,user_id:MOCK_USER.user_id,name:MOCK_USER.name,role:MOCK_USER.role,initials:MOCK_USER.initials,empresa:MOCK_USER.empresa,token:MOCK_USER.token,onboarded:hasOnboarding,theme:'void'});
+        saveSession({empresa_id:MOCK_USER.empresa_id,user_id:MOCK_USER.user_id,name:MOCK_USER.name,role:MOCK_USER.role,initials:MOCK_USER.initials,empresa:MOCK_USER.empresa,token:MOCK_USER.token,refresh_token:MOCK_USER.refreshToken,onboarded:hasOnboarding,theme:'void'});
         PERSISTED_CHAT_MESSAGES = [];
         setTimeout(()=>{ setLoggedIn(true); setOnboarded(hasOnboarding); },600);
       } else {

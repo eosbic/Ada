@@ -220,6 +220,43 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
     pending = _get_pending(empresa_id, user_id)
     if pending:
         print(f"HITL: Pending found: type={pending.get('type')}, user said: '{message}'")
+
+        # Email en composición — el usuario responde con info faltante
+        if pending.get("type") == "email_composing":
+            if _is_rejection(message):
+                _resolve_pending(pending["id"], "cancelled")
+                return {"response": "Email cancelado.", "intent": "email", "model_used": "hitl"}
+
+            _resolve_pending(pending["id"], "completed")
+            partial_to = pending.get("partial_to", "")
+            awaiting = pending.get("awaiting", "body")
+
+            if awaiting == "body" and partial_to:
+                enriched = f"Escribe un email a {partial_to} con este contenido: {message}"
+            elif awaiting == "to":
+                enriched = f"Escribe un email a {message}"
+            else:
+                enriched = message
+
+            print(f"HITL: Email composing -> enriched message: '{enriched[:80]}'")
+            result = await run_agent(
+                message=enriched,
+                empresa_id=empresa_id,
+                user_id=user_id,
+                source=source,
+            )
+
+            if result.get("needs_approval") and result.get("draft_id"):
+                to_match = re.search(r'(?:\*\*)?Para:(?:\*\*)?\s*(\S+)', result.get("response", ""))
+                to_addr = to_match.group(1) if to_match else partial_to
+                _save_pending(empresa_id, user_id, "email_send", {
+                    "draft_id": result["draft_id"],
+                    "to": to_addr,
+                    "original_draft": result.get("original_draft", ""),
+                })
+
+            return result
+
         if _is_approval(message):
             print(f"HITL: Approving draft_id={pending.get('draft_id')}")
             _resolve_pending(pending["id"], "approved")
@@ -324,6 +361,17 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
             "original_draft": result.get("original_draft", ""),
         })
         print(f"HITL: Aprobacion pendiente para {empresa_id[:8]}::{user_id[:8]} -> draft_id={result['draft_id']}")
+
+    # ── HITL: Si el email_agent pidió más info, guardar estado de composición ──
+    elif result.get("intent") == "email" and not result.get("needs_approval"):
+        response_text = result.get("response", "").lower()
+        composing_phrases = ["qué quieres que le diga", "a quién le envío", "a quién le escribo", "me das el email"]
+        if any(phrase in response_text for phrase in composing_phrases):
+            _save_pending(empresa_id, user_id, "email_composing", {
+                "partial_to": result.get("resolved_email", ""),
+                "awaiting": "body" if "qué quieres" in response_text else "to",
+            })
+            print(f"HITL: Email composing state saved — awaiting more info")
 
     return result
 

@@ -461,25 +461,59 @@ async def generate_response(state: ChatState) -> dict:
             response_text = "Aún no he aprendido mucho — llevamos poco tiempo trabajando juntos."
         return {"response": response_text, "model_used": "memory", "sources_used": []}
 
-    # Intent: recuerda que [X]
+    # Intent: recuerda que [X] — soporta múltiples líneas
     if state.get("intent") == "explicit_memory":
         msg = state.get("message", "")
-        fact = msg
-        for prefix in ["recuerda que ", "ten en cuenta que ", "no olvides que ", "anota que "]:
-            if msg.lower().startswith(prefix):
-                fact = msg[len(prefix):].strip()
-                break
+        lines = [l.strip() for l in msg.split("\n") if l.strip()]
+        saved_count = 0
+        from api.services.user_memory_service import save_memory
+        for line in lines:
+            fact = line
+            for prefix in ["recuerda que ", "ten en cuenta que ", "no olvides que ", "anota que "]:
+                if line.lower().startswith(prefix):
+                    fact = line[len(prefix):].strip()
+                    break
+            if fact and len(fact) > 5:
+                # Detectar categoría automáticamente
+                category = "context"
+                fact_lower = fact.lower()
+                if any(word in fact_lower for word in ["prefiero", "me gusta", "no me gusta", "quiero que"]):
+                    category = "preference"
+                elif any(word in fact_lower for word in ["es mi", "mi socio", "mi amigo", "mi amiga", "trabaja", "colabora"]):
+                    category = "relationship"
+                save_memory(empresa_id, user_id, fact, category=category, source="explicit")
+                saved_count += 1
 
-        if fact and len(fact) > 5:
-            try:
-                from api.services.user_memory_service import save_memory
-                save_memory(empresa_id, user_id, fact, category="context", source="explicit")
-                response_text = "Listo, lo tengo."
-            except Exception:
-                response_text = "Listo, lo tengo."
+        if saved_count > 0:
+            response_text = f"Listo, guardé {saved_count} cosa{'s' if saved_count > 1 else ''}."
         else:
             response_text = "¿Qué quieres que recuerde?"
         return {"response": response_text, "model_used": "memory", "sources_used": []}
+
+    # Intent: onboarding
+    if state.get("intent") == "onboarding":
+        try:
+            from api.agents.onboarding_agent import process_onboarding
+            async with AsyncSessionLocal() as db:
+                result = await process_onboarding(
+                    db=db,
+                    empresa_id=empresa_id,
+                    user_id=user_id,
+                    user_name="",
+                    user_response="",
+                )
+            return {
+                "response": result.get("message", "Iniciemos la configuración de tu empresa."),
+                "model_used": "onboarding",
+                "sources_used": [],
+            }
+        except Exception as e:
+            print(f"CHAT: Error iniciando onboarding: {e}")
+            return {
+                "response": "Hubo un error iniciando la configuración. Intenta de nuevo.",
+                "model_used": "error",
+                "sources_used": [],
+            }
 
     message = state.get("message", "")
     context = state.get("context", "Sin contexto previo.")
@@ -534,6 +568,24 @@ async def generate_response(state: ChatState) -> dict:
         system += f"\n\nINSTRUCCIONES PERSONALIZADAS DE LA EMPRESA:\n{custom_prompt}"
     if personalized:
         system = personalized + "\n\n" + system
+
+    # Resolver nombre real del usuario
+    user_real_name = ""
+    if empresa_id and user_id:
+        try:
+            with sync_engine.connect() as conn:
+                user_row = conn.execute(
+                    sql_text("SELECT nombre FROM usuarios WHERE id = :uid"),
+                    {"uid": user_id}
+                ).fetchone()
+                if user_row:
+                    user_real_name = user_row.nombre or ""
+        except Exception:
+            pass
+
+    if user_real_name:
+        if not personalized or user_real_name not in personalized:
+            system += f"\n\nEl usuario con el que hablas se llama {user_real_name}. SIEMPRE usa su nombre real, NUNCA un username."
 
     # Inyectar memorias del usuario
     try:

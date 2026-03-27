@@ -199,6 +199,7 @@ async def execute_email_action(state: EmailState) -> dict:
             return {"response": f"Error creando borrador: {result['error']}"}
 
         original_draft_text = f"Para: {to}\nAsunto: {subject}\n\n{body}"
+        print(f"EMAIL AGENT: Draft created, draft_id={result.get('draft_id')}, needs_approval=True")
 
         return {
             "response": (

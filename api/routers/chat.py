@@ -83,7 +83,9 @@ async def _update_brief_pref(user_id: str, prefs: dict):
 
 
 APPROVAL_WORDS = (
-    "sí", "si", "ok", "enviar", "confirmar", "envíalo", "envialo", "dale", "aprobado", "send",
+    "sí", "si", "ok", "enviar", "confirmar", "envíalo", "envialo",
+    "dale", "aprobado", "send", "yes", "mándalo", "mandalo",
+    "perfecto", "listo", "va", "hazlo",
 )
 REJECTION_WORDS = (
     "no", "cancelar", "rechazar", "cancela", "cancel",
@@ -100,11 +102,12 @@ def _is_rejection(message: str) -> bool:
 
 def _get_pending(empresa_id: str, user_id: str) -> dict | None:
     """Obtiene aprobacion pendiente desde PostgreSQL."""
+    from datetime import datetime
     try:
         with sync_engine.connect() as conn:
             row = conn.execute(
                 sql_text("""
-                    SELECT id, draft_type, draft_content
+                    SELECT id, draft_type, draft_content, created_at, expires_at
                     FROM pending_approvals
                     WHERE empresa_id = :eid AND user_id = :uid
                     AND status = 'pending'
@@ -116,7 +119,24 @@ def _get_pending(empresa_id: str, user_id: str) -> dict | None:
             ).fetchone()
             if row:
                 content = row.draft_content if isinstance(row.draft_content, dict) else json.loads(row.draft_content)
+                print(f"HITL: Found pending for {empresa_id[:8]}::{user_id[:8]} type={row.draft_type} created={row.created_at}")
                 return {"id": str(row.id), "type": row.draft_type, **content}
+            else:
+                # Debug: buscar si hay pending expirados o con otro status
+                debug_row = conn.execute(
+                    sql_text("""
+                        SELECT id, status, created_at, expires_at
+                        FROM pending_approvals
+                        WHERE empresa_id = :eid AND user_id = :uid
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """),
+                    {"eid": empresa_id, "uid": user_id}
+                ).fetchone()
+                if debug_row:
+                    print(f"HITL: No pending ACTIVE, but found {debug_row.status} from {debug_row.created_at}, expires={debug_row.expires_at}, NOW={datetime.utcnow()}")
+                else:
+                    print(f"HITL: No pending at all for {empresa_id[:8]}::{user_id[:8]}")
     except Exception as e:
         print(f"HITL: Error leyendo pending: {e}")
     return None
@@ -165,8 +185,8 @@ def _save_pending(empresa_id: str, user_id: str, draft_type: str, draft_content:
             )
             conn.execute(
                 sql_text("""
-                    INSERT INTO pending_approvals (empresa_id, user_id, draft_type, draft_content)
-                    VALUES (:eid, :uid, :dtype, :content::jsonb)
+                    INSERT INTO pending_approvals (empresa_id, user_id, draft_type, draft_content, expires_at)
+                    VALUES (:eid, :uid, :dtype, :content::jsonb, NOW() + INTERVAL '1 hour')
                 """),
                 {
                     "eid": empresa_id, "uid": user_id,
@@ -194,13 +214,15 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
     # ── HITL: Si hay accion pendiente para este usuario ──
     pending = _get_pending(empresa_id, user_id)
     if pending:
+        print(f"HITL: Pending found: type={pending.get('type')}, user said: '{message}'")
         if _is_approval(message):
+            print(f"HITL: Approving draft_id={pending.get('draft_id')}")
             _resolve_pending(pending["id"], "approved")
 
             if pending.get("type") == "email_send":
                 try:
                     from api.services.gmail_service import gmail_send
-                    result = gmail_send(draft_id=pending.get("draft_id", ""), empresa_id=empresa_id)
+                    result = gmail_send(draft_id=pending.get("draft_id", ""), empresa_id=empresa_id, user_id=user_id)
                     if isinstance(result, dict) and "error" in result:
                         return {
                             "response": f"Error enviando email: {result['error']}",

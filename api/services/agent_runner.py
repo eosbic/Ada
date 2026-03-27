@@ -466,6 +466,13 @@ async def run_agent(
         "attachments": attachments,
     }
 
+    # Propagar HITL fields desde el agente (email drafts)
+    if agent_result.get("needs_approval"):
+        result["needs_approval"] = True
+        result["draft_id"] = agent_result.get("draft_id", "")
+        result["original_draft"] = agent_result.get("original_draft", "")
+        print(f"RUNNER: Propagating needs_approval=True, draft_id={result['draft_id']}")
+
     # Budget metadata
     if budget_status:
         result["budget"] = {

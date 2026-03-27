@@ -540,7 +540,7 @@ async def process_onboarding(
                     mission, vision, value_proposition, business_model,
                     sales_cycle_days, brand_voice, website_url,
                     target_icp, social_urls, logo_url,
-                    productivity_suite, pm_tool, onboarding_complete
+                    productivity_suite, pm_tool, main_competitors, onboarding_complete
                 ) VALUES (
                     :empresa_id, :company_name, :industry_type,
                     :description, :products, :services,
@@ -550,7 +550,7 @@ async def process_onboarding(
                     :mission, :vision, :value_prop, :biz_model,
                     :sales_days, :brand_voice, :web_url,
                     :icp, :socials, :logo,
-                    :suite, :pm, TRUE
+                    :suite, :pm, :competitors, TRUE
                 )
                 ON CONFLICT (empresa_id) DO UPDATE SET
                     company_name = EXCLUDED.company_name,
@@ -576,6 +576,7 @@ async def process_onboarding(
                     logo_url = EXCLUDED.logo_url,
                     productivity_suite = EXCLUDED.productivity_suite,
                     pm_tool = EXCLUDED.pm_tool,
+                    main_competitors = EXCLUDED.main_competitors,
                     onboarding_complete = TRUE,
                     updated_at = NOW()
             """),
@@ -605,6 +606,7 @@ async def process_onboarding(
                 "logo": company_data.get("logo_url", ""),
                 "suite": company_data.get("productivity_suite", "google"),
                 "pm": company_data.get("pm_tool", "none"),
+                "competitors": json.dumps(company_data.get("competitors_raw", []), ensure_ascii=False),
             },
         )
 

@@ -503,9 +503,11 @@ def _build_company_card(empresa_id: str) -> str:
         interests_str = ", ".join(str(i) for i in interests) if interests else "N/D"
 
         competitors = "N/D"
-        if hasattr(row, "main_competitors") and row.main_competitors:
+        try:
             comps = row.main_competitors if isinstance(row.main_competitors, list) else json.loads(row.main_competitors or "[]")
             competitors = ", ".join(str(c) for c in comps) if comps else "N/D"
+        except Exception:
+            competitors = "N/D"
 
         icp = "N/D"
         if hasattr(row, "target_icp") and row.target_icp:

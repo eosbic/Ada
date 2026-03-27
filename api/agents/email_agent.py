@@ -62,6 +62,24 @@ Tu trabajo es interpretar lo que el usuario necesita y generar los parámetros e
 - read: leer un email específico (necesita message_id o buscar primero)
 - draft: crear borrador (necesita to, subject, body)
 - send: enviar borrador existente (necesita draft_id)
+- need_info: falta información para crear borrador
+- resolve_contact: buscar email de un contacto por nombre
+
+## REGLA CRÍTICA — INFORMACIÓN INCOMPLETA:
+- Si tienes destinatario pero NO contenido → {"action": "need_info", "params": {"to": "email@x.com", "missing": "body"}}
+- Si no tienes destinatario → {"action": "need_info", "params": {"missing": "to"}}
+- Si no tienes nada → {"action": "need_info", "params": {"missing": "to,body"}}
+- SOLO usar action=draft cuando tienes: destinatario + tema + contenido claro
+- NUNCA crear borrador con texto placeholder como "[Aquí iría el contenido]"
+
+## REGLA — NOMBRES EN VEZ DE EMAILS:
+- Si el usuario dice "escríbele a Oswaldo" o "mándale un mail a María" (nombre, no email):
+  → {"action": "resolve_contact", "params": {"contact_name": "Oswaldo"}}
+- Ada buscará el email en los contactos del usuario
+
+## CONTEXTO CONVERSACIONAL:
+Si en el historial reciente ya se mencionó un destinatario y el usuario ahora da contenido sin repetir el destinatario, USAR el destinatario del historial.
+Si se resolvió un contacto por nombre previamente, usar ese email.
 
 ## EJEMPLOS:
 - "busca el último correo" → {"action": "search", "params": {"query": "newer_than:1d", "max_results": 1}}
@@ -71,6 +89,8 @@ Tu trabajo es interpretar lo que el usuario necesita y generar los parámetros e
 - "lee el correo de María" → {"action": "search", "params": {"query": "from:maria", "max_results": 1}}
 - "dame los 2 últimos correos" → {"action": "search", "params": {"query": "newer_than:1d", "max_results": 2}}
 - "escribe email a juan@x.com sobre la reunión" → {"action": "draft", "params": {"to": "juan@x.com", "subject": "Reunión", "body": "..."}}
+- "escríbele a Oswaldo" → {"action": "resolve_contact", "params": {"contact_name": "Oswaldo"}}
+- "escribe a pedro@x.com" (sin contenido) → {"action": "need_info", "params": {"to": "pedro@x.com", "missing": "body"}}
 - "envíalo" → {"action": "send", "params": {"draft_id": ""}}
 
 Responde SOLO JSON válido, sin markdown, sin explicación:
@@ -81,9 +101,24 @@ async def classify_email_action(state: EmailState) -> dict:
     """Clasifica qué acción de email quiere el usuario."""
     model, model_name = selector.get_model("chat_with_tools")
 
+    # Agregar historial reciente para contexto
+    history_context = ""
+    if state.get("empresa_id") and state.get("user_id"):
+        try:
+            from api.agents.chat_agent import get_history
+            history = get_history(state["empresa_id"], state["user_id"])
+            if history:
+                recent = history[-4:]
+                history_context = "\n\nCONVERSACIÓN RECIENTE:\n" + "\n".join(
+                    f"{m.get('role','user')}: {m.get('content','')[:200]}"
+                    for m in recent
+                )
+        except Exception:
+            pass
+
     response = await model.ainvoke([
         {"role": "system", "content": EMAIL_SYSTEM_PROMPT},
-        {"role": "user", "content": state["message"]},
+        {"role": "user", "content": state["message"] + history_context},
     ])
 
     try:
@@ -153,6 +188,43 @@ async def execute_email_action(state: EmailState) -> dict:
             ),
             "action_result": email,
         }
+
+    elif action == "need_info":
+        to = params.get("to", "")
+        missing = params.get("missing", "body")
+        if "to" in missing and "body" in missing:
+            return {"response": "¿A quién le escribo y qué quieres que le diga?"}
+        elif "body" in missing:
+            return {"response": f"Tengo el destinatario ({to}). ¿Qué quieres que le diga?"}
+        elif "to" in missing:
+            return {"response": "¿A quién le envío el correo?"}
+        else:
+            return {"response": "¿Qué necesitas que diga el correo?"}
+
+    elif action == "resolve_contact":
+        contact_name = params.get("contact_name", "")
+        if not contact_name:
+            return {"response": "¿A quién le envío el correo?"}
+
+        contacts = _search_contacts(empresa_id, user_id, contact_name)
+
+        if not contacts:
+            return {"response": f"No encontré a '{contact_name}' en tus contactos. ¿Me das el email directamente?"}
+        elif len(contacts) == 1:
+            email = contacts[0]["email"]
+            name = contacts[0]["name"]
+            return {
+                "response": f"Encontré a **{name}** ({email}). ¿Qué quieres que le diga?",
+                "resolved_email": email,
+            }
+        else:
+            options = "\n".join(
+                f"{i+1}. **{c['name']}** — {c.get('org', '')} ({c['email']})"
+                for i, c in enumerate(contacts)
+            )
+            return {
+                "response": f"Encontré varios contactos con ese nombre:\n{options}\n\n¿A cuál te refieres?",
+            }
 
     elif action == "draft":
         to = params.get("to", "")
@@ -231,6 +303,57 @@ async def execute_email_action(state: EmailState) -> dict:
 
     else:
         return {"response": f"No entendí la acción '{action}'. Puedo buscar, leer, redactar o enviar emails."}
+
+
+def _search_contacts(empresa_id: str, user_id: str, name: str) -> list:
+    """Busca contactos por nombre en Google Contacts del usuario."""
+    try:
+        from api.services.tenant_credentials import get_google_credentials
+
+        creds = get_google_credentials(empresa_id, "google_contacts", user_id=user_id)
+        if not creds or "error" in creds:
+            creds = get_google_credentials(empresa_id, "google_contacts")
+            if not creds or "error" in creds:
+                return []
+
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        credentials = Credentials(
+            token=creds.get("access_token"),
+            refresh_token=creds.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=creds.get("client_id"),
+            client_secret=creds.get("client_secret"),
+        )
+
+        service = build("people", "v1", credentials=credentials, cache_discovery=False)
+
+        results = service.people().searchContacts(
+            query=name,
+            readMask="names,emailAddresses,organizations",
+            pageSize=5,
+        ).execute()
+
+        contacts = []
+        for person in results.get("results", []):
+            p = person.get("person", {})
+            names = p.get("names", [{}])
+            emails = p.get("emailAddresses", [])
+            orgs = p.get("organizations", [])
+
+            if emails:
+                contacts.append({
+                    "name": names[0].get("displayName", name) if names else name,
+                    "email": emails[0].get("value", ""),
+                    "org": orgs[0].get("name", "") if orgs else "",
+                })
+
+        return contacts
+
+    except Exception as e:
+        print(f"EMAIL: Error buscando contactos: {e}")
+        return []
 
 
 # ─── Compilar grafo ──────────────────────────────────────

@@ -109,7 +109,8 @@ async def extract_user_facts(empresa_id: str, user_id: str, user_message: str, a
         from models.selector import selector
         model, _ = selector.get_model("routing")
 
-        prompt = f"""Analiza este intercambio y extrae 0-3 hechos sobre el USUARIO (no sobre el negocio).
+        prompt = f"""Analiza este intercambio entre un usuario y Ada (asistente empresarial).
+Extrae SOLO hechos sobre el USUARIO COMO PERSONA.
 
 MENSAJE DEL USUARIO:
 {user_message[:500]}
@@ -117,20 +118,27 @@ MENSAJE DEL USUARIO:
 RESPUESTA DE ADA:
 {ada_response[:500]}
 
-Tipos de hechos que buscar:
-- Preferencias de comunicación (horarios, canales, estilo) → category: "preference"
-- Temas que le interesan o preocupan → category: "interest"
+EXTRAER:
+- Cómo prefiere comunicarse (horarios, estilo, canal) → category: "preference"
+- Qué temas le preocupan personalmente → category: "interest"
 - Contexto personal actual (viaje, presentación, deadline) → category: "context"
 - Patrones de comportamiento (siempre pregunta X primero) → category: "pattern"
-- Relaciones con personas (mi socio, mi proveedor) → category: "relationship"
-- Forma de hablar (tutea, formal, directo, detallista) → category: "style"
+- Relaciones personales ("Claudio es mi amigo", "Orlando es mi proveedor") → category: "relationship"
+- Forma de hablar (tutea, formal, usa humor) → category: "style"
 
-NO extraer:
-- Datos de negocio (ventas, métricas, productos)
-- Información que ya está en reportes
-- Hechos triviales (que saludó, que preguntó algo)
+NUNCA EXTRAER:
+- Datos de la empresa (sector, productos, competidores, clientes ideales)
+- Información de reportes o métricas de negocio
+- URLs, links o archivos compartidos
+- Configuraciones o herramientas que usa la empresa
+- Cargos o roles de terceros (ICP, decisores de compra)
+- Hechos genéricos ("trabaja en X", "usa Ada", "habla español")
+- Duplicados de lo que ya se sabe
 
-Responde SOLO JSON array. Si no hay hechos relevantes, responde [].
+Si el mensaje parece parte de configuración, onboarding o setup → responde [].
+Si no hay hechos personales claros → responde [].
+
+Responde SOLO JSON array.
 Ejemplo: [{{"fact": "Prefiere que le muestren primero las alertas críticas", "category": "preference"}}]"""
 
         response = await model.ainvoke([

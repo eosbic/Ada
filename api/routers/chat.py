@@ -85,19 +85,24 @@ async def _update_brief_pref(user_id: str, prefs: dict):
 APPROVAL_WORDS = (
     "sí", "si", "ok", "enviar", "confirmar", "envíalo", "envialo",
     "dale", "aprobado", "send", "yes", "mándalo", "mandalo",
-    "perfecto", "listo", "va", "hazlo",
+    "perfecto", "listo", "va", "hazlo", "claro", "por favor",
+    "adelante", "hágale", "hagale", "eso", "correcto",
 )
 REJECTION_WORDS = (
     "no", "cancelar", "rechazar", "cancela", "cancel",
+    "no envíes", "no envies", "mejor no", "déjalo", "dejalo",
+    "olvídalo", "olvidalo", "para", "detente",
 )
 
 
 def _is_approval(message: str) -> bool:
-    return (message or "").strip().lower() in APPROVAL_WORDS
+    msg = (message or "").strip().lower().rstrip("!.,")
+    return msg in APPROVAL_WORDS
 
 
 def _is_rejection(message: str) -> bool:
-    return (message or "").strip().lower() in REJECTION_WORDS
+    msg = (message or "").strip().lower().rstrip("!.,")
+    return msg in REJECTION_WORDS
 
 
 def _get_pending(empresa_id: str, user_id: str) -> dict | None:
@@ -288,8 +293,9 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                 print(f"HITL: Error enviando email editado: {e}")
                 return {"response": f"Error enviando el email editado: {e}", "intent": "email", "model_used": "hitl"}
         else:
-            # Si escribe otra cosa, cancelar pendiente y procesar normal
-            _clear_pending(empresa_id, user_id)
+            # El usuario dice algo que no es aprobación, rechazo ni edición
+            # NO cancelar — mantener pending vivo para cuando diga "sí"/"envíalo"
+            print(f"HITL: User said '{message[:50]}' with pending active — keeping pending alive")
 
     # ── Configure Brief: detección rápida antes del router ──
     brief_result = await _handle_configure_brief(message, empresa_id, user_id)

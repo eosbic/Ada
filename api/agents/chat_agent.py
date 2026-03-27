@@ -650,8 +650,9 @@ async def save_to_memory(state: ChatState) -> dict:
         except Exception as e:
             print(f"CHAT: Error persistiendo historial: {e}")
 
-    # Extraer hechos sobre el usuario
-    if empresa_id and user_id and message and response:
+    # Extraer hechos sobre el usuario (no durante onboarding ni intents de memoria)
+    intent = state.get("intent", "")
+    if empresa_id and user_id and message and response and intent not in ("onboarding", "explicit_memory", "my_memories"):
         try:
             from api.services.user_memory_service import extract_user_facts
             await extract_user_facts(empresa_id, user_id, message, response)

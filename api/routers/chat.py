@@ -229,16 +229,13 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
 
             _resolve_pending(pending["id"], "completed")
             partial_to = pending.get("partial_to", "")
-            awaiting = pending.get("awaiting", "body")
 
-            if awaiting == "body" and partial_to:
+            if partial_to:
                 enriched = f"Escribe un email a {partial_to} con este contenido: {message}"
-            elif awaiting == "to":
-                enriched = f"Escribe un email a {message}"
             else:
-                enriched = message
+                enriched = f"Escribe un email a {message}"
 
-            print(f"HITL: Email composing -> enriched message: '{enriched[:80]}'")
+            print(f"HITL: Email composing -> enriched: '{enriched[:100]}'")
             result = await run_agent(
                 message=enriched,
                 empresa_id=empresa_id,
@@ -247,13 +244,15 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
             )
 
             if result.get("needs_approval") and result.get("draft_id"):
-                to_match = re.search(r'(?:\*\*)?Para:(?:\*\*)?\s*(\S+)', result.get("response", ""))
-                to_addr = to_match.group(1) if to_match else partial_to
+                response_text = result.get("response", "")
+                to_match = re.search(r'[\w.-]+@[\w.-]+\.\w+', response_text)
+                to_addr = to_match.group(0) if to_match else partial_to
                 _save_pending(empresa_id, user_id, "email_send", {
                     "draft_id": result["draft_id"],
                     "to": to_addr,
                     "original_draft": result.get("original_draft", ""),
                 })
+                print(f"HITL: Draft created from composing, draft_id={result['draft_id']}")
 
             return result
 
@@ -364,14 +363,18 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
 
     # ── HITL: Si el email_agent pidió más info, guardar estado de composición ──
     elif result.get("intent") == "email" and not result.get("needs_approval"):
-        response_text = result.get("response", "").lower()
+        response_text = result.get("response", "")
+        response_lower = response_text.lower()
         composing_phrases = ["qué quieres que le diga", "a quién le envío", "a quién le escribo", "me das el email"]
-        if any(phrase in response_text for phrase in composing_phrases):
+        if any(phrase in response_lower for phrase in composing_phrases):
+            # Extraer email del texto de respuesta si existe
+            email_match = re.search(r'[\w.-]+@[\w.-]+\.\w+', response_text)
+            partial_email = email_match.group(0) if email_match else ""
             _save_pending(empresa_id, user_id, "email_composing", {
-                "partial_to": result.get("resolved_email", ""),
-                "awaiting": "body" if "qué quieres" in response_text else "to",
+                "partial_to": partial_email,
+                "awaiting": "body" if partial_email else "to",
             })
-            print(f"HITL: Email composing state saved — awaiting more info")
+            print(f"HITL: Email composing saved — partial_to={partial_email}, awaiting={'body' if partial_email else 'to'}")
 
     return result
 

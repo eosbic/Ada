@@ -117,6 +117,18 @@ async def classify_intent(state: RouterState) -> dict:
             "routed_to": "chat_agent",
         }
 
+    # WHITELIST: preguntas sobre MI empresa -> chat_agent (que tiene el ADN)
+    my_company_triggers = [
+        "qué sabes de mi empresa", "que sabes de mi empresa",
+        "cuéntame de mi empresa", "cuentame de mi empresa",
+        "háblame de mi empresa", "hablame de mi empresa",
+        "información de mi empresa", "informacion de mi empresa",
+        "datos de mi empresa", "perfil de mi empresa",
+    ]
+    if any(trigger in msg_lower for trigger in my_company_triggers):
+        print(f"ROUTER: my_company detected -> conversational (has DNA)")
+        return {"intent": "conversational", "confidence": 1.0, "routed_to": "chat_agent"}
+
     # WHITELIST: "qué sabes de mí" (exact match para no atrapar "qué sabes de mi empresa")
     my_memory_exact = [
         "qué sabes de mí", "que sabes de mi", "qué recuerdas de mí",

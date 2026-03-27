@@ -62,9 +62,15 @@ def _is_iso_datetime(value: str) -> bool:
 async def classify_calendar_action(state: CalendarState) -> dict:
     model, model_name = selector.get_model("routing")
 
+    # Limpiar contexto conversacional residual si se coló
+    msg = state.get("message", "")
+    for marker in ["[CONTEXTO CONVERSACIONAL RECIENTE:", "CONVERSACIÓN RECIENTE:"]:
+        if marker in msg:
+            msg = msg.split(marker)[0].strip()
+
     response = await model.ainvoke([
         {"role": "system", "content": CALENDAR_SYSTEM_PROMPT},
-        {"role": "user", "content": state.get("message", "")},
+        {"role": "user", "content": msg},
     ])
 
     try:

@@ -1,5 +1,5 @@
 """
-Tenant Credentials — Lee credenciales OAuth2 por empresa.
+Tenant Credentials — Lee credenciales OAuth2 por empresa y por usuario.
 Reemplaza os.getenv() por lectura de tenant_credentials.
 Auto-refresh si el token expiró.
 """
@@ -20,11 +20,23 @@ MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
 MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "common")
 
+# Servicios personales: cada usuario conecta los suyos
+PERSONAL_SERVICES = {
+    "gmail", "google_calendar", "google_contacts", "google_drive",
+    "outlook_email", "outlook_calendar", "outlook_contacts", "onedrive",
+}
 
-def get_google_credentials(empresa_id: str, service: str = "gmail") -> dict:
+# Servicios de empresa: una conexión para todos
+COMPANY_SERVICES = {
+    "google_shared_drive", "sharepoint",
+    "notion", "plane", "asana", "monday", "trello", "clickup", "jira",
+}
+
+
+def get_google_credentials(empresa_id: str, service: str = "gmail", user_id: str = "") -> dict:
     """
-    Obtiene credenciales de Google para una empresa.
-    Verifica que la empresa exista y tenga credenciales activas.
+    Obtiene credenciales de Google para una empresa/usuario.
+    Lookup: primero user-specific, luego fallback empresa.
     """
 
     #Validar formato UUID
@@ -49,16 +61,33 @@ def get_google_credentials(empresa_id: str, service: str = "gmail") -> dict:
                 print(f"CREDENTIALS: Empresa {empresa_id} no existe en el sistema")
                 return {"error": "Empresa no registrada en el sistema"}
 
-            # 2. Buscar credenciales activas
-            result = conn.execute(
-                sql_text("""
-                    SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
-                    FROM tenant_credentials
-                    WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
-                """),
-                {"eid": empresa_id, "provider": service},
-            )
-            row = result.fetchone()
+            # 2. Buscar credenciales: primero personales, luego empresa
+            row = None
+            if user_id and service in PERSONAL_SERVICES:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id = :uid AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service, "uid": user_id},
+                )
+                row = result.fetchone()
+                if row:
+                    print(f"CREDENTIALS: Credenciales personales de user {user_id[:8]} para {service}")
+
+            if not row:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id IS NULL AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service},
+                )
+                row = result.fetchone()
+                if row:
+                    print(f"CREDENTIALS: Credenciales de empresa para {service}")
 
         if not row:
             service_name = "Gmail" if service == "gmail" else "Google Calendar"
@@ -72,7 +101,7 @@ def get_google_credentials(empresa_id: str, service: str = "gmail") -> dict:
 
         # 4. Auto-refresh si expiró
         if row.oauth2_expiry and row.oauth2_expiry < datetime.utcnow() + timedelta(minutes=5):
-            creds = _refresh_token(empresa_id, service, creds, refresh_token, fernet)
+            creds = _refresh_token(empresa_id, service, creds, refresh_token, fernet, user_id=user_id)
 
         print(f"CREDENTIALS: OK {service} para {empresa.nombre}")
         return creds
@@ -81,7 +110,7 @@ def get_google_credentials(empresa_id: str, service: str = "gmail") -> dict:
         print(f"ERROR credentials {service}/{empresa_id}: {e}")
         return {"error": f"Error obteniendo credenciales: {str(e)}"}
 
-def _refresh_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
+def _refresh_token(empresa_id, service, creds, refresh_token, fernet, user_id: str = "") -> dict:
     """Refresh automático de OAuth2 token."""
     import requests
 
@@ -107,19 +136,35 @@ def _refresh_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
     try:
         encrypted_creds = fernet.encrypt(json.dumps(creds).encode())
         with sync_engine.connect() as conn:
-            conn.execute(
-                sql_text("""
-                    UPDATE tenant_credentials
-                    SET encrypted_data = :creds, oauth2_expiry = :expiry
-                    WHERE empresa_id = :eid AND provider = :provider
-                """),
-                {
-                    "creds": encrypted_creds.decode(),
-                    "expiry": new_expiry,
-                    "eid": empresa_id,
-                    "provider": service,
-                },
-            )
+            if user_id:
+                conn.execute(
+                    sql_text("""
+                        UPDATE tenant_credentials
+                        SET encrypted_data = :creds, oauth2_expiry = :expiry
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id = :uid
+                    """),
+                    {
+                        "creds": encrypted_creds.decode(),
+                        "expiry": new_expiry,
+                        "eid": empresa_id,
+                        "provider": service,
+                        "uid": user_id,
+                    },
+                )
+            else:
+                conn.execute(
+                    sql_text("""
+                        UPDATE tenant_credentials
+                        SET encrypted_data = :creds, oauth2_expiry = :expiry
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id IS NULL
+                    """),
+                    {
+                        "creds": encrypted_creds.decode(),
+                        "expiry": new_expiry,
+                        "eid": empresa_id,
+                        "provider": service,
+                    },
+                )
             conn.commit()
         print(f"CREDENTIALS: Refresh OK {service}/{empresa_id}")
     except Exception as e:
@@ -128,10 +173,10 @@ def _refresh_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
     return creds
 
 
-def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar") -> dict:
+def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar", user_id: str = "") -> dict:
     """
-    Obtiene credenciales de Microsoft 365 para una empresa.
-    Services válidos: outlook_calendar, outlook_email, onedrive.
+    Obtiene credenciales de Microsoft 365 para una empresa/usuario.
+    Lookup: primero user-specific, luego fallback empresa.
     """
     import re
     uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
@@ -152,21 +197,41 @@ def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar"
             if not empresa:
                 return {"error": "Empresa no registrada en el sistema"}
 
-            result = conn.execute(
-                sql_text("""
-                    SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
-                    FROM tenant_credentials
-                    WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
-                """),
-                {"eid": empresa_id, "provider": service},
-            )
-            row = result.fetchone()
+            # Buscar credenciales: primero personales, luego empresa
+            row = None
+            if user_id and service in PERSONAL_SERVICES:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id = :uid AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service, "uid": user_id},
+                )
+                row = result.fetchone()
+                if row:
+                    print(f"CREDENTIALS: Credenciales personales de user {user_id[:8]} para {service}")
+
+            if not row:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data, oauth2_refresh_token_encrypted, oauth2_expiry
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id IS NULL AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service},
+                )
+                row = result.fetchone()
+                if row:
+                    print(f"CREDENTIALS: Credenciales de empresa para {service}")
 
         if not row:
             service_names = {
                 "outlook_calendar": "Outlook Calendar",
                 "outlook_email": "Outlook Email",
                 "onedrive": "OneDrive",
+                "outlook_contacts": "Outlook Contacts",
+                "sharepoint": "SharePoint",
             }
             svc_name = service_names.get(service, service)
             return {"error": f"{empresa.nombre} no tiene {svc_name} conectado. El administrador debe vincularlo desde configuración."}
@@ -178,7 +243,7 @@ def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar"
 
         # Auto-refresh si expiró
         if row.oauth2_expiry and row.oauth2_expiry < datetime.utcnow() + timedelta(minutes=5):
-            creds = _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet)
+            creds = _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet, user_id=user_id)
 
         creds.setdefault("client_id", MICROSOFT_CLIENT_ID)
         creds.setdefault("client_secret", MICROSOFT_CLIENT_SECRET)
@@ -192,7 +257,7 @@ def get_microsoft_credentials(empresa_id: str, service: str = "outlook_calendar"
         return {"error": f"Error obteniendo credenciales M365: {str(e)}"}
 
 
-def _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet) -> dict:
+def _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet, user_id: str = "") -> dict:
     """Refresh automático de OAuth2 token para Microsoft 365."""
     import requests
 
@@ -229,22 +294,41 @@ def _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet) 
         encrypted_refresh = fernet.encrypt(creds["refresh_token"].encode())
 
         with sync_engine.connect() as conn:
-            conn.execute(
-                sql_text("""
-                    UPDATE tenant_credentials
-                    SET encrypted_data = :creds,
-                        oauth2_refresh_token_encrypted = :refresh,
-                        oauth2_expiry = :expiry
-                    WHERE empresa_id = :eid AND provider = :provider
-                """),
-                {
-                    "creds": encrypted_creds.decode(),
-                    "refresh": encrypted_refresh.decode(),
-                    "expiry": new_expiry,
-                    "eid": empresa_id,
-                    "provider": service,
-                },
-            )
+            if user_id:
+                conn.execute(
+                    sql_text("""
+                        UPDATE tenant_credentials
+                        SET encrypted_data = :creds,
+                            oauth2_refresh_token_encrypted = :refresh,
+                            oauth2_expiry = :expiry
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id = :uid
+                    """),
+                    {
+                        "creds": encrypted_creds.decode(),
+                        "refresh": encrypted_refresh.decode(),
+                        "expiry": new_expiry,
+                        "eid": empresa_id,
+                        "provider": service,
+                        "uid": user_id,
+                    },
+                )
+            else:
+                conn.execute(
+                    sql_text("""
+                        UPDATE tenant_credentials
+                        SET encrypted_data = :creds,
+                            oauth2_refresh_token_encrypted = :refresh,
+                            oauth2_expiry = :expiry
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id IS NULL
+                    """),
+                    {
+                        "creds": encrypted_creds.decode(),
+                        "refresh": encrypted_refresh.decode(),
+                        "expiry": new_expiry,
+                        "eid": empresa_id,
+                        "provider": service,
+                    },
+                )
             conn.commit()
         print(f"CREDENTIALS: M365 Refresh OK {service}/{empresa_id}")
     except Exception as e:
@@ -253,10 +337,10 @@ def _refresh_microsoft_token(empresa_id, service, creds, refresh_token, fernet) 
     return creds
 
 
-def get_service_credentials(empresa_id: str, service: str) -> dict:
-    """Obtiene credenciales para servicios con API key (Notion, Plane)."""
+def get_service_credentials(empresa_id: str, service: str, user_id: str = "") -> dict:
+    """Obtiene credenciales para servicios con API key (Notion, Plane, etc.)."""
     import re
-    
+
     if not FERNET_KEY:
         return {"error": "Sistema de credenciales no configurado"}
 
@@ -276,15 +360,29 @@ def get_service_credentials(empresa_id: str, service: str) -> dict:
             if not empresa:
                 return {"error": "Empresa no registrada"}
 
-            result = conn.execute(
-                sql_text("""
-                    SELECT encrypted_data
-                    FROM tenant_credentials
-                    WHERE empresa_id = :eid AND provider = :provider AND is_active = TRUE
-                """),
-                {"eid": empresa_id, "provider": service},
-            )
-            row = result.fetchone()
+            # Buscar credenciales: primero personales, luego empresa
+            row = None
+            if user_id and service in PERSONAL_SERVICES:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id = :uid AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service, "uid": user_id},
+                )
+                row = result.fetchone()
+
+            if not row:
+                result = conn.execute(
+                    sql_text("""
+                        SELECT encrypted_data
+                        FROM tenant_credentials
+                        WHERE empresa_id = :eid AND provider = :provider AND user_id IS NULL AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id, "provider": service},
+                )
+                row = result.fetchone()
 
         if not row:
             return {"error": f"{empresa.nombre} no tiene {service} conectado."}

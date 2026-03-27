@@ -101,9 +101,9 @@ class MCPHost:
 
     async def call_tool(
         self, server_name: str, tool_name: str,
-        arguments: dict, empresa_id: str
+        arguments: dict, empresa_id: str, user_id: str = ""
     ) -> Any:
-        """Ejecuta una tool con credenciales de la empresa."""
+        """Ejecuta una tool con credenciales de la empresa/usuario."""
 
         if server_name not in self.servers:
             return {"error": f"MCP Server '{server_name}' no registrado"}
@@ -121,9 +121,9 @@ class MCPHost:
                 m365_service = "onedrive"
             else:
                 m365_service = "outlook_calendar"
-            creds = get_microsoft_credentials(empresa_id, m365_service)
+            creds = get_microsoft_credentials(empresa_id, m365_service, user_id=user_id)
         else:
-            creds = get_service_credentials(empresa_id, server["credential_type"])
+            creds = get_service_credentials(empresa_id, server["credential_type"], user_id=user_id)
 
         if "error" in creds:
             return creds
@@ -185,7 +185,7 @@ class MCPHost:
             print(f"MCP get_empresa_pm_provider error: {e}")
         return None
 
-    async def call_generic_pm_tool(self, tool_name: str, arguments: dict, empresa_id: str) -> Any:
+    async def call_generic_pm_tool(self, tool_name: str, arguments: dict, empresa_id: str, user_id: str = "") -> Any:
         """Resuelve qué PM server genérico usar por empresa y ejecuta."""
         from api.database import sync_engine
         from sqlalchemy import text as sql_text
@@ -204,18 +204,18 @@ class MCPHost:
                         {"eid": empresa_id, "provider": server["credential_type"]},
                     )
                     if result.fetchone():
-                        return await self.call_tool(server_name, tool_name, arguments, empresa_id)
+                        return await self.call_tool(server_name, tool_name, arguments, empresa_id, user_id=user_id)
             except Exception as e:
                 print(f"MCP call_generic_pm_tool error for {server_name}: {e}")
 
         return {"error": "No hay herramienta de proyectos genérica conectada"}
 
-    async def call_tool_by_name(self, tool_name: str, arguments: dict, empresa_id: str) -> Any:
+    async def call_tool_by_name(self, tool_name: str, arguments: dict, empresa_id: str, user_id: str = "") -> Any:
         """Busca el server correcto por nombre de tool y ejecuta."""
         for name, server in self.servers.items():
             tool_names = [t["name"] for t in server["tools_fn"]()]
             if tool_name in tool_names:
-                return await self.call_tool(name, tool_name, arguments, empresa_id)
+                return await self.call_tool(name, tool_name, arguments, empresa_id, user_id=user_id)
 
         return {"error": f"Tool '{tool_name}' no encontrada en ningún MCP Server"}
 

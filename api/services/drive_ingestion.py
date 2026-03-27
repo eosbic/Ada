@@ -51,7 +51,7 @@ async def _list_drive_tenants() -> List[Tuple[str, str]]:
                 """
                 SELECT DISTINCT empresa_id, provider
                 FROM tenant_credentials
-                WHERE provider IN ('google_drive', 'onedrive')
+                WHERE provider IN ('google_drive', 'google_shared_drive', 'onedrive', 'sharepoint')
                   AND is_active = TRUE
                 """
             )
@@ -60,8 +60,8 @@ async def _list_drive_tenants() -> List[Tuple[str, str]]:
     return [(str(r.empresa_id), r.provider) for r in rows]
 
 
-def _build_drive_service(empresa_id: str):
-    creds_data = get_google_credentials(empresa_id, "google_drive")
+def _build_drive_service(empresa_id: str, provider: str = "google_drive", user_id: str = ""):
+    creds_data = get_google_credentials(empresa_id, provider, user_id=user_id)
     if "error" in creds_data:
         return None, creds_data["error"]
 
@@ -173,12 +173,12 @@ def _dispatch_ingestion(empresa_id: str, file_name: str, file_bytes: bytes):
     return {"status": "skipped", "reason": f"extension_not_supported:{ext}"}
 
 
-def _list_onedrive_files(empresa_id: str, folder_path: str = "") -> List[Dict]:
-    """Lista archivos en OneDrive vía Microsoft Graph."""
+def _list_onedrive_files(empresa_id: str, folder_path: str = "", provider: str = "onedrive", user_id: str = "") -> List[Dict]:
+    """Lista archivos en OneDrive/SharePoint vía Microsoft Graph."""
     try:
         from api.mcp_servers.mcp_microsoft365_server import m365_drive_list
         from api.services.tenant_credentials import get_microsoft_credentials
-        creds = get_microsoft_credentials(empresa_id, "onedrive")
+        creds = get_microsoft_credentials(empresa_id, provider, user_id=user_id)
         if "error" in creds:
             print(f"DRIVE INGESTION OneDrive creds error {empresa_id}: {creds['error']}")
             return []
@@ -189,11 +189,11 @@ def _list_onedrive_files(empresa_id: str, folder_path: str = "") -> List[Dict]:
         return []
 
 
-def _download_onedrive_file(empresa_id: str, file_id: str) -> bytes:
-    """Descarga archivo de OneDrive vía Microsoft Graph."""
+def _download_onedrive_file(empresa_id: str, file_id: str, provider: str = "onedrive", user_id: str = "") -> bytes:
+    """Descarga archivo de OneDrive/SharePoint vía Microsoft Graph."""
     import httpx
     from api.services.tenant_credentials import get_microsoft_credentials
-    creds = get_microsoft_credentials(empresa_id, "onedrive")
+    creds = get_microsoft_credentials(empresa_id, provider, user_id=user_id)
     if "error" in creds:
         raise RuntimeError(creds["error"])
     token = creds["access_token"]
@@ -208,9 +208,9 @@ def _download_onedrive_file(empresa_id: str, file_id: str) -> bytes:
     return resp.content
 
 
-async def _ingest_google_drive(empresa_id: str, folder_id: str):
-    """Ingesta de archivos desde Google Drive."""
-    service, err = _build_drive_service(empresa_id)
+async def _ingest_google_drive(empresa_id: str, folder_id: str, provider: str = "google_drive", user_id: str = ""):
+    """Ingesta de archivos desde Google Drive / Shared Drive."""
+    service, err = _build_drive_service(empresa_id, provider=provider, user_id=user_id)
     if err:
         print(f"DRIVE INGESTION Google {empresa_id}: {err}")
         return
@@ -246,9 +246,9 @@ async def _ingest_google_drive(empresa_id: str, folder_id: str):
             print(f"DRIVE INGESTION file error {empresa_id}/{file_name}: {e}")
 
 
-async def _ingest_onedrive(empresa_id: str, folder_path: str):
-    """Ingesta de archivos desde OneDrive."""
-    files = _list_onedrive_files(empresa_id, folder_path)
+async def _ingest_onedrive(empresa_id: str, folder_path: str, provider: str = "onedrive", user_id: str = ""):
+    """Ingesta de archivos desde OneDrive/SharePoint."""
+    files = _list_onedrive_files(empresa_id, folder_path, provider=provider, user_id=user_id)
 
     for f in files:
         file_id = f.get("id", "")
@@ -263,7 +263,7 @@ async def _ingest_onedrive(empresa_id: str, folder_path: str):
             continue
 
         try:
-            blob = _download_onedrive_file(empresa_id, file_id)
+            blob = _download_onedrive_file(empresa_id, file_id, provider=provider, user_id=user_id)
             _dispatch_ingestion(empresa_id, file_name, blob)
             await _mark_processed(empresa_id, file_id, file_name, modified_time)
             print(f"DRIVE INGESTION OneDrive OK: {empresa_id} -> {file_name}")
@@ -286,7 +286,7 @@ async def run_drive_ingestion_once():
         return
 
     for empresa_id, provider in tenants:
-        if provider == "google_drive" and folder_id:
-            await _ingest_google_drive(empresa_id, folder_id)
-        elif provider == "onedrive" and onedrive_folder:
-            await _ingest_onedrive(empresa_id, onedrive_folder)
+        if provider in ("google_drive", "google_shared_drive") and folder_id:
+            await _ingest_google_drive(empresa_id, folder_id, provider=provider)
+        elif provider in ("onedrive", "sharepoint") and onedrive_folder:
+            await _ingest_onedrive(empresa_id, onedrive_folder, provider=provider)

@@ -87,10 +87,11 @@ async def execute_calendar_action(state: CalendarState) -> dict:
     action = state.get("action", "")
     params = state.get("action_params", {})
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
 
     if action == "list":
         days = int(params.get("days_ahead", 7))
-        events = calendar_list_events(days_ahead=days, empresa_id=empresa_id)
+        events = calendar_list_events(days_ahead=days, empresa_id=empresa_id, user_id=user_id)
         if not events:
             return {
                 "response": f"No tienes eventos en los proximos {days} dias.",
@@ -104,7 +105,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
 
     if action == "search":
         query = params.get("query", state.get("message", ""))
-        events = calendar_search_events(query, empresa_id=empresa_id)
+        events = calendar_search_events(query, empresa_id=empresa_id, user_id=user_id)
         if not events:
             return {
                 "response": f"No encontre eventos con '{query}'.",
@@ -137,7 +138,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
             return {"response": "end_datetime invalido. Usa ISO 8601 completo: YYYY-MM-DDTHH:MM:SS"}
 
         # protocolo: availability -> create_event
-        avail = calendar_get_availability(days_ahead=7, empresa_id=empresa_id)
+        avail = calendar_get_availability(days_ahead=7, empresa_id=empresa_id, user_id=user_id)
         result = calendar_create_event(
             summary=summary,
             start_datetime=start,
@@ -146,6 +147,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
             location=location,
             attendees=attendees,
             empresa_id=empresa_id,
+            user_id=user_id,
         )
 
         if "error" in result:
@@ -173,7 +175,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
         else:
             if not query:
                 return {"response": "Para actualizar necesito event_id o query para buscar el evento."}
-            found = calendar_search_events(query, max_results=1, empresa_id=empresa_id)
+            found = calendar_search_events(query, max_results=1, empresa_id=empresa_id, user_id=user_id)
             if not found:
                 return {"response": f"No encontre evento para actualizar con '{query}'."}
             target_event = found[0]
@@ -186,6 +188,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
             description=params.get("description"),
             location=params.get("location"),
             empresa_id=empresa_id,
+            user_id=user_id,
         )
         if "error" in result:
             return {"response": f"Error actualizando evento: {result['error']}"}
@@ -206,12 +209,12 @@ async def execute_calendar_action(state: CalendarState) -> dict:
         if not event_id:
             if not query:
                 return {"response": "Para borrar necesito event_id o query para buscar el evento."}
-            found = calendar_search_events(query, max_results=1, empresa_id=empresa_id)
+            found = calendar_search_events(query, max_results=1, empresa_id=empresa_id, user_id=user_id)
             if not found:
                 return {"response": f"No encontre evento para eliminar con '{query}'."}
             event_id = found[0]["id"]
 
-        result = calendar_delete_event(event_id, empresa_id=empresa_id)
+        result = calendar_delete_event(event_id, empresa_id=empresa_id, user_id=user_id)
         if "error" in result:
             return {"response": f"Error eliminando evento: {result['error']}"}
 
@@ -225,7 +228,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
 
     if action == "availability":
         days = int(params.get("days_ahead", 7))
-        avail = calendar_get_availability(days_ahead=days, empresa_id=empresa_id)
+        avail = calendar_get_availability(days_ahead=days, empresa_id=empresa_id, user_id=user_id)
         return {
             "response": f"Disponibilidad consultada: {avail.get('total_events', 0)} eventos en {days} dias.",
             "sources_used": [{"name": "calendar", "detail": "availability", "confidence": 0.82}],

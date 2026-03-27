@@ -309,8 +309,9 @@ async def gather_all_sources(state: Entity360State) -> dict:
     # 5. Calendar: buscar eventos con la entidad
     try:
         from api.services.calendar_service import calendar_search_events
+        user_id = state.get("user_id", "")
 
-        events = calendar_search_events(entity_name, max_results=5, empresa_id=empresa_id)
+        events = calendar_search_events(entity_name, max_results=5, empresa_id=empresa_id, user_id=user_id)
         if events:
             calendar_data = events
             sources_used.append({"name": "calendar", "detail": f"{len(calendar_data)} eventos", "confidence": 0.8})
@@ -320,8 +321,9 @@ async def gather_all_sources(state: Entity360State) -> dict:
     # 6. Gmail: buscar emails relacionados
     try:
         from api.services.gmail_service import gmail_search
+        user_id = state.get("user_id", "")
 
-        emails = gmail_search(entity_name, max_results=5, empresa_id=empresa_id)
+        emails = gmail_search(entity_name, max_results=5, empresa_id=empresa_id, user_id=user_id)
         if emails:
             gmail_data = emails
             sources_used.append({"name": "gmail", "detail": f"{len(gmail_data)} correos", "confidence": 0.75})

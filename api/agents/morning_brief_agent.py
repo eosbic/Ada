@@ -40,10 +40,11 @@ class MorningState(TypedDict, total=False):
 
 async def fetch_today_calendar(state: MorningState) -> dict:
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
 
     try:
         from api.services.calendar_service import calendar_list_events
-        events = calendar_list_events(days_ahead=1, max_results=10, empresa_id=empresa_id)
+        events = calendar_list_events(days_ahead=1, max_results=10, empresa_id=empresa_id, user_id=user_id)
 
         if events:
             cal_text = "\n".join([
@@ -74,10 +75,11 @@ async def fetch_today_calendar(state: MorningState) -> dict:
 
 async def fetch_unread_emails(state: MorningState) -> dict:
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
 
     try:
         from api.services.gmail_service import gmail_search
-        emails = gmail_search("is:unread newer_than:1d", max_results=5, empresa_id=empresa_id)
+        emails = gmail_search("is:unread newer_than:1d", max_results=5, empresa_id=empresa_id, user_id=user_id)
 
         if emails:
             email_text = "\n".join([

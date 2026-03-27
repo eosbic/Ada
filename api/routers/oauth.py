@@ -24,12 +24,18 @@ MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
 MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "common")
 
+PERSONAL_SERVICES = {
+    "gmail", "google_calendar", "google_contacts", "google_drive",
+    "outlook_email", "outlook_calendar", "outlook_contacts", "onedrive",
+}
+
 M365_SCOPES = [
     "offline_access",
     "Calendars.ReadWrite",
     "Mail.ReadWrite",
     "Mail.Send",
     "Files.Read.All",
+    "Contacts.Read",
 ]
 
 SCOPES = [
@@ -37,15 +43,17 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/contacts.readonly",
 ]
 
 
 @router.get("/connect/{service}/{empresa_id}")
-async def get_oauth_url(service: str, empresa_id: str):
-    if service not in ("gmail", "calendar", "drive", "google"):
+async def get_oauth_url(service: str, empresa_id: str, user_id: str = ""):
+    valid = ("gmail", "calendar", "drive", "contacts", "google", "google_shared_drive")
+    if service not in valid:
         raise HTTPException(status_code=400, detail="Servicio no valido")
 
-    state = f"{empresa_id}|{service}"
+    state = f"{empresa_id}|{service}|{user_id}"
 
     import urllib.parse
     params = {
@@ -70,6 +78,7 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
         parts = state.split("|")
         empresa_id = parts[0].strip()
         service = parts[1].split(",")[0].split('"')[0].strip()
+        user_id = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
     except Exception:
         raise HTTPException(status_code=400, detail="State invalido")
 
@@ -106,26 +115,32 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
     encrypted_refresh = fernet.encrypt(refresh_token.encode())
     expiry = datetime.utcnow() + timedelta(seconds=expires_in)
 
+    # Mapping de servicios
     if service == "google":
-        services_to_save = ["gmail", "google_calendar", "google_drive"]
+        services_to_save = ["gmail", "google_calendar", "google_contacts", "google_drive"]
+    elif service == "google_shared_drive":
+        services_to_save = ["google_shared_drive"]
     elif service == "gmail":
         services_to_save = ["gmail"]
     elif service == "calendar":
         services_to_save = ["google_calendar"]
     elif service == "drive":
         services_to_save = ["google_drive"]
+    elif service == "contacts":
+        services_to_save = ["google_contacts"]
     else:
         services_to_save = []
 
     for svc in services_to_save:
+        svc_user_id = user_id if svc in PERSONAL_SERVICES and user_id else None
         await db.execute(
             text(
                 """
                 INSERT INTO tenant_credentials
-                    (empresa_id, provider, encrypted_data,
+                    (empresa_id, provider, user_id, encrypted_data,
                      oauth2_refresh_token_encrypted, oauth2_expiry, is_active)
-                VALUES (:empresa_id, :provider, :creds, :refresh, :expiry, TRUE)
-                ON CONFLICT (empresa_id, provider)
+                VALUES (:empresa_id, :provider, :user_id, :creds, :refresh, :expiry, TRUE)
+                ON CONFLICT (empresa_id, provider, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'))
                 DO UPDATE SET
                     encrypted_data = EXCLUDED.encrypted_data,
                     oauth2_refresh_token_encrypted = EXCLUDED.oauth2_refresh_token_encrypted,
@@ -136,6 +151,7 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
             {
                 "empresa_id": empresa_id,
                 "provider": svc,
+                "user_id": svc_user_id,
                 "creds": encrypted_creds.decode(),
                 "refresh": encrypted_refresh.decode(),
                 "expiry": expiry,
@@ -154,19 +170,20 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
         "status": "connected",
         "empresa_id": empresa_id,
         "services": services_to_save,
+        "personal": bool(user_id),
         "message": "Servicios de Google conectados exitosamente.",
     }
 
 
 @router.get("/microsoft/connect/{service}/{empresa_id}")
-async def get_microsoft_oauth_url(service: str, empresa_id: str):
+async def get_microsoft_oauth_url(service: str, empresa_id: str, user_id: str = ""):
     """Genera URL de autorización Azure AD para Microsoft 365."""
-    valid_services = ("outlook", "outlook_calendar", "outlook_email", "onedrive", "microsoft365")
+    valid_services = ("outlook", "outlook_calendar", "outlook_email", "outlook_contacts", "onedrive", "microsoft365", "sharepoint")
     if service not in valid_services:
         raise HTTPException(status_code=400, detail=f"Servicio no válido. Usa: {', '.join(valid_services)}")
 
     import urllib.parse
-    state = f"{empresa_id}|{service}"
+    state = f"{empresa_id}|{service}|{user_id}"
     params = {
         "client_id": MICROSOFT_CLIENT_ID,
         "redirect_uri": f"{API_BASE_URL}/oauth/microsoft/callback",
@@ -189,6 +206,7 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
         parts = state.split("|")
         empresa_id = parts[0].strip()
         service = parts[1].strip()
+        user_id = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
     except Exception:
         raise HTTPException(status_code=400, detail="State inválido")
 
@@ -229,25 +247,30 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
 
     # Determinar qué providers guardar
     if service in ("microsoft365", "outlook"):
-        services_to_save = ["outlook_email", "outlook_calendar", "onedrive"]
+        services_to_save = ["outlook_email", "outlook_calendar", "outlook_contacts", "onedrive"]
+    elif service == "sharepoint":
+        services_to_save = ["sharepoint"]
     elif service == "outlook_calendar":
         services_to_save = ["outlook_calendar"]
     elif service == "outlook_email":
         services_to_save = ["outlook_email"]
+    elif service == "outlook_contacts":
+        services_to_save = ["outlook_contacts"]
     elif service == "onedrive":
         services_to_save = ["onedrive"]
     else:
         services_to_save = []
 
     for svc in services_to_save:
+        svc_user_id = user_id if svc in PERSONAL_SERVICES and user_id else None
         await db.execute(
             text(
                 """
                 INSERT INTO tenant_credentials
-                    (empresa_id, provider, encrypted_data,
+                    (empresa_id, provider, user_id, encrypted_data,
                      oauth2_refresh_token_encrypted, oauth2_expiry, is_active)
-                VALUES (:empresa_id, :provider, :creds, :refresh, :expiry, TRUE)
-                ON CONFLICT (empresa_id, provider)
+                VALUES (:empresa_id, :provider, :user_id, :creds, :refresh, :expiry, TRUE)
+                ON CONFLICT (empresa_id, provider, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'))
                 DO UPDATE SET
                     encrypted_data = EXCLUDED.encrypted_data,
                     oauth2_refresh_token_encrypted = EXCLUDED.oauth2_refresh_token_encrypted,
@@ -258,6 +281,7 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
             {
                 "empresa_id": empresa_id,
                 "provider": svc,
+                "user_id": svc_user_id,
                 "creds": encrypted_creds.decode(),
                 "refresh": encrypted_refresh.decode(),
                 "expiry": expiry,
@@ -276,6 +300,7 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
         "status": "connected",
         "empresa_id": empresa_id,
         "services": services_to_save,
+        "personal": bool(user_id),
         "message": "Servicios de Microsoft 365 conectados exitosamente.",
     }
 
@@ -352,9 +377,9 @@ async def connect_service(data: dict, db: AsyncSession = Depends(get_db)):
         text(
             """
             INSERT INTO tenant_credentials
-                (empresa_id, provider, encrypted_data, is_active)
-            VALUES (:empresa_id, :provider, :creds, TRUE)
-            ON CONFLICT (empresa_id, provider)
+                (empresa_id, provider, user_id, encrypted_data, is_active)
+            VALUES (:empresa_id, :provider, NULL, :creds, TRUE)
+            ON CONFLICT (empresa_id, provider, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'))
             DO UPDATE SET
                 encrypted_data = EXCLUDED.encrypted_data,
                 is_active = TRUE
@@ -379,17 +404,45 @@ async def connect_service(data: dict, db: AsyncSession = Depends(get_db)):
 @router.get("/connections/{empresa_id}")
 async def list_connections(empresa_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        text("SELECT provider, is_active, created_at FROM tenant_credentials WHERE empresa_id = :eid"),
+        text("SELECT provider, is_active, user_id, created_at FROM tenant_credentials WHERE empresa_id = :eid"),
         {"eid": empresa_id},
     )
     rows = result.fetchall()
 
     connections = {}
     for row in rows:
-        connections[row.provider] = {"connected": row.is_active, "since": str(row.created_at)[:10]}
+        connections[row.provider] = {
+            "connected": row.is_active,
+            "personal": row.user_id is not None,
+            "since": str(row.created_at)[:10],
+        }
 
-    for svc in ["gmail", "google_calendar", "google_drive", "outlook_email", "outlook_calendar", "onedrive", "notion", "plane", "asana"]:
+    for svc in ["gmail", "google_calendar", "google_contacts", "google_drive", "google_shared_drive",
+                 "outlook_email", "outlook_calendar", "outlook_contacts", "onedrive", "sharepoint",
+                 "notion", "plane", "asana"]:
         if svc not in connections:
             connections[svc] = {"connected": False}
 
     return {"empresa_id": empresa_id, "connections": connections}
+
+
+@router.get("/my-connections/{empresa_id}/{user_id}")
+async def my_connections(empresa_id: str, user_id: str, db: AsyncSession = Depends(get_db)):
+    """Conexiones personales de un usuario + las de empresa."""
+    result = await db.execute(
+        text("""
+            SELECT provider, is_active, user_id, created_at
+            FROM tenant_credentials
+            WHERE empresa_id = :eid AND (user_id = :uid OR user_id IS NULL) AND is_active = TRUE
+        """),
+        {"eid": empresa_id, "uid": user_id},
+    )
+    rows = result.fetchall()
+    connections = {}
+    for row in rows:
+        connections[row.provider] = {
+            "connected": row.is_active,
+            "personal": row.user_id is not None,
+            "since": str(row.created_at)[:10],
+        }
+    return {"empresa_id": empresa_id, "user_id": user_id, "connections": connections}

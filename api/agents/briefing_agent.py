@@ -76,6 +76,7 @@ async def extract_entities(state: BriefingState) -> dict:
 async def cross_calendar(state: BriefingState) -> dict:
     """Busca en el calendario reuniones relacionadas con las entidades."""
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
     entities = state.get("entities", [])
 
     if not entities or not empresa_id:
@@ -87,7 +88,7 @@ async def cross_calendar(state: BriefingState) -> dict:
         calendar_hits = []
         all_events = []
         for entity in entities[:3]:
-            events = calendar_search_events(entity, days_ahead=14, max_results=3, empresa_id=empresa_id)
+            events = calendar_search_events(entity, days_ahead=14, max_results=3, empresa_id=empresa_id, user_id=user_id)
             all_events.extend(events)
             for e in events:
                 calendar_hits.append(
@@ -119,6 +120,7 @@ async def cross_calendar(state: BriefingState) -> dict:
 async def cross_email(state: BriefingState) -> dict:
     """Busca emails recientes relacionados con las entidades."""
     empresa_id = state.get("empresa_id", "")
+    user_id = state.get("user_id", "")
     entities = state.get("entities", [])
 
     if not entities or not empresa_id:
@@ -130,7 +132,7 @@ async def cross_email(state: BriefingState) -> dict:
         email_hits = []
         all_emails = []
         for entity in entities[:3]:
-            emails = gmail_search(entity, max_results=2, empresa_id=empresa_id)
+            emails = gmail_search(entity, max_results=2, empresa_id=empresa_id, user_id=user_id)
             all_emails.extend(emails)
             for e in emails:
                 email_hits.append(

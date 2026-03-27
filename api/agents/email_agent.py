@@ -110,11 +110,12 @@ async def execute_email_action(state: EmailState) -> dict:
     params = state.get("action_params", {})
     empresa_id = state.get("empresa_id", "")
 
+    user_id = state.get("user_id", "")
+
     if action == "search":
         query = params.get("query", "")
         max_results = params.get("max_results", 3)
-        results = gmail_search(query, max_results=max_results, empresa_id=empresa_id)
-        #results = gmail_search(query, max_results=3, empresa_id=empresa_id)
+        results = gmail_search(query, max_results=max_results, empresa_id=empresa_id, user_id=user_id)
         if results:
             formatted = "\n".join([
                 f"📧 **{e['subject']}** — de {e['from']} ({e['date'][:16]})\n   {e['snippet'][:100]}"
@@ -132,13 +133,13 @@ async def execute_email_action(state: EmailState) -> dict:
         if not message_id:
             # Si no hay ID, buscar primero
             query = params.get("query", state["message"])
-            results = gmail_search(query, max_results=1)
+            results = gmail_search(query, max_results=1, empresa_id=empresa_id, user_id=user_id)
             if results:
                 message_id = results[0]["id"]
             else:
                 return {"response": "No encontré el email para leer."}
 
-        email = gmail_read(message_id, empresa_id=empresa_id)
+        email = gmail_read(message_id, empresa_id=empresa_id, user_id=user_id)
         if "error" in email:
             return {"response": f"Error leyendo email: {email['error']}"}
 
@@ -180,7 +181,7 @@ async def execute_email_action(state: EmailState) -> dict:
         if not body:
             body = state["message"]
 
-        result = gmail_draft(to=to, subject=subject, body=body, empresa_id=empresa_id)
+        result = gmail_draft(to=to, subject=subject, body=body, empresa_id=empresa_id, user_id=user_id)
 
         if "error" in result:
             return {"response": f"Error creando borrador: {result['error']}"}
@@ -203,7 +204,7 @@ async def execute_email_action(state: EmailState) -> dict:
         if not draft_id:
             return {"response": "No hay borrador para enviar. Primero crea uno."}
 
-        result = gmail_send(draft_id, empresa_id=empresa_id)
+        result = gmail_send(draft_id, empresa_id=empresa_id, user_id=user_id)
         if "error" in result:
             return {"response": f"Error enviando: {result['error']}"}
 

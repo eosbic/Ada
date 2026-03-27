@@ -243,12 +243,35 @@ async def execute_email_action(state: EmailState) -> dict:
             except Exception:
                 pass
 
+        # Cargar preferencias generales de escritura
+        writing_prefs = ""
+        if empresa_id and user_id:
+            try:
+                from api.services.user_memory_service import load_user_memories
+                all_memories = load_user_memories(empresa_id, user_id)
+                if all_memories:
+                    writing_lines = [l for l in all_memories.split("\n") if any(kw in l.lower() for kw in ["escrit", "email", "tono", "formal", "informal", "corto", "largo"])]
+                    if writing_lines:
+                        writing_prefs = "\nPREFERENCIAS GENERALES DE ESCRITURA DEL USUARIO:\n" + "\n".join(writing_lines)
+            except Exception:
+                pass
+
         # Si no hay subject o body, generar con LLM
         if not subject or not body:
             model, _ = selector.get_model("email_draft")
-            draft_system = "Genera un email profesional en español. Responde JSON: {\"subject\": \"...\", \"body\": \"...\"}"
+            draft_system = """Genera un email en español. Responde JSON: {"subject": "...", "body": "..."}
+
+REGLAS DE REDACCIÓN:
+- Si hay preferencias para este contacto, APLÍCALAS (tono, tratamiento, formalidad)
+- Si NO hay preferencias, usar tono profesional pero cálido (NO "Estimado/a" genérico)
+- Usar el nombre del destinatario si lo conoces
+- Emails cortos y directos — máximo 4-5 líneas para el cuerpo
+- Ir al punto rápido, sin relleno cortés excesivo
+- Firmar con el nombre del remitente si está disponible"""
             if contact_prefs:
-                draft_system += f"\n\nPREFERENCIAS DEL USUARIO PARA ESTE CONTACTO:\n{contact_prefs}\nAplica estas preferencias al redactar."
+                draft_system += f"\n\nPREFERENCIAS PARA ESTE CONTACTO:\n{contact_prefs}\nAplica estas preferencias al tono y formato del email."
+            if writing_prefs:
+                draft_system += writing_prefs
             gen = await model.ainvoke([
                 {"role": "system", "content": draft_system},
                 {"role": "user", "content": f"Para: {to}. Contexto: {state['message']}"},
@@ -275,11 +298,11 @@ async def execute_email_action(state: EmailState) -> dict:
 
         return {
             "response": (
-                f"✉️ Borrador creado:\n\n"
-                f"**Para:** {to}\n"
-                f"**Asunto:** {subject}\n"
-                f"**Cuerpo:** {body[:200]}...\n\n"
-                f"¿Lo envío? Responde 'sí' para confirmar."
+                f"✉️ **Borrador creado:**\n\n"
+                f"📬 **Para:** {to}\n"
+                f"📝 **Asunto:** {subject}\n\n"
+                f"💬 **Cuerpo:**\n{body[:300]}\n\n"
+                f"---\n¿Lo envío? Responde **sí** para confirmar o **no** para cancelar."
             ),
             "needs_approval": True,
             "draft_id": result["draft_id"],

@@ -481,6 +481,68 @@ async def retrieve_context(state: ChatState) -> dict:
     }
 
 
+def _build_company_card(empresa_id: str) -> str:
+    """Arma ficha profesional de la empresa desde ada_company_profile."""
+    if not empresa_id:
+        return ""
+    try:
+        with sync_engine.connect() as conn:
+            row = conn.execute(
+                sql_text("SELECT * FROM ada_company_profile WHERE empresa_id = :eid"),
+                {"eid": empresa_id}
+            ).fetchone()
+        if not row:
+            return ""
+
+        products = row.main_products if isinstance(row.main_products, list) else json.loads(row.main_products or "[]")
+        services = row.main_services if isinstance(row.main_services, list) else json.loads(row.main_services or "[]")
+        offerings = products + services
+        offerings_str = ", ".join(str(o) for o in offerings) if offerings else "N/D"
+
+        interests = row.admin_interests if isinstance(row.admin_interests, list) else json.loads(row.admin_interests or "[]")
+        interests_str = ", ".join(str(i) for i in interests) if interests else "N/D"
+
+        competitors = "N/D"
+        if hasattr(row, "main_competitors") and row.main_competitors:
+            comps = row.main_competitors if isinstance(row.main_competitors, list) else json.loads(row.main_competitors or "[]")
+            competitors = ", ".join(str(c) for c in comps) if comps else "N/D"
+
+        icp = "N/D"
+        if hasattr(row, "target_icp") and row.target_icp:
+            icp_data = row.target_icp if isinstance(row.target_icp, dict) else json.loads(row.target_icp or "{}")
+            parts = []
+            if icp_data.get("sector"):
+                parts.append(f"Sectores: {icp_data['sector']}")
+            if icp_data.get("decision_maker_title"):
+                parts.append(f"Decisor: {icp_data['decision_maker_title']}")
+            if icp_data.get("company_size"):
+                parts.append(f"Tamaño: {icp_data['company_size']}")
+            if parts:
+                icp = " | ".join(parts)
+
+        card = (
+            f"🏢 **{row.company_name or 'Sin nombre'}**\n\n"
+            f"📋 **Sector:** {row.industry_type or 'N/D'}\n"
+            f"📝 **Descripción:** {row.business_description or 'N/D'}\n\n"
+            f"💡 **Propuesta de valor:**\n{getattr(row, 'value_proposition', '') or 'N/D'}\n\n"
+            f"📦 **Productos/Servicios:**\n{offerings_str}\n\n"
+            f"👥 **Tamaño:** {row.company_size or 'N/D'} ({row.num_employees or 'N/D'} empleados)\n"
+            f"📍 **Ubicación:** {row.city or 'N/D'}, {getattr(row, 'country', 'Colombia')}\n\n"
+            f"🌐 **Web:** {getattr(row, 'website_url', '') or 'N/D'}\n"
+            f"🎨 **Voz de marca:** {getattr(row, 'brand_voice', '') or 'N/D'}\n\n"
+            f"🎯 **Cliente ideal:**\n{icp}\n\n"
+            f"🏆 **Competidores:**\n{competitors}\n\n"
+            f"📊 **Prioridades:** {interests_str}\n\n"
+            f"📧 **Suite:** {getattr(row, 'productivity_suite', '') or 'N/D'}\n"
+            f"📋 **Gestión de proyectos:** {getattr(row, 'pm_tool', '') or 'N/D'}"
+        )
+        return card.strip()
+
+    except Exception as e:
+        print(f"CHAT: Error building company card: {e}")
+        return ""
+
+
 async def generate_response(state: ChatState) -> dict:
     if state.get("fact_answer"):
         return {
@@ -491,6 +553,16 @@ async def generate_response(state: ChatState) -> dict:
 
     empresa_id = state.get("empresa_id", "")
     user_id = state.get("user_id", "")
+
+    # Intent: mi empresa
+    if state.get("intent") == "my_company":
+        try:
+            company_info = _build_company_card(empresa_id)
+            if company_info:
+                return {"response": company_info, "model_used": "company_card", "sources_used": []}
+        except Exception as e:
+            print(f"CHAT: Error building company card: {e}")
+        # Fallback al flujo normal del LLM
 
     # Intent: ¿qué sabes de mí?
     if state.get("intent") == "my_memories":

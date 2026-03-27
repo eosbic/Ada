@@ -39,6 +39,7 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "briefing" -> Briefing ejecutivo o resumen diario, "dame el brief de hoy"
 - "configure_brief" -> Activar, desactivar o cambiar hora del brief diario: "activa el brief a las 6am", "desactiva el brief", "cambia el brief a las 9", "envíame el brief todos los dias a las 7"
 - "onboarding" -> Configurar Ada, configurar empresa, hacer onboarding, setup inicial: "quiero configurar mi empresa", "configurar Ada", "hacer el onboarding", "setup"
+- "my_company" -> Preguntas sobre MI propia empresa: "qué sabes de mi empresa", "háblame de mi empresa", "datos de mi empresa". NO confundir con entity_360 que es para terceros.
 - "my_memories" -> El usuario pregunta qué sabe Ada de él: "qué sabes de mí", "qué recuerdas", "qué has aprendido de mí", "que sabes de mi"
 - "explicit_memory" -> El usuario pide que Ada recuerde algo: "recuerda que", "ten en cuenta que", "no olvides que", "anota que"
 - "conversational" -> Saludo, charla casual o pregunta general
@@ -87,6 +88,7 @@ INTENT_AGENT_MAP = {
     "briefing": "morning_brief_agent",
     "configure_brief": "chat_agent",
     "onboarding": "chat_agent",
+    "my_company": "chat_agent",
     "my_memories": "chat_agent",
     "explicit_memory": "chat_agent",
 }
@@ -117,7 +119,7 @@ async def classify_intent(state: RouterState) -> dict:
             "routed_to": "chat_agent",
         }
 
-    # WHITELIST: preguntas sobre MI empresa -> chat_agent (que tiene el ADN)
+    # WHITELIST: preguntas sobre MI empresa -> chat_agent con handler dedicado
     my_company_triggers = [
         "qué sabes de mi empresa", "que sabes de mi empresa",
         "cuéntame de mi empresa", "cuentame de mi empresa",
@@ -126,8 +128,27 @@ async def classify_intent(state: RouterState) -> dict:
         "datos de mi empresa", "perfil de mi empresa",
     ]
     if any(trigger in msg_lower for trigger in my_company_triggers):
-        print(f"ROUTER: my_company detected -> conversational (has DNA)")
-        return {"intent": "conversational", "confidence": 1.0, "routed_to": "chat_agent"}
+        print(f"ROUTER: my_company detected")
+        return {"intent": "my_company", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # Detectar nombre de empresa del usuario para no confundir con entity_360
+    empresa_id = state.get("empresa_id", "")
+    if empresa_id:
+        try:
+            from api.database import sync_engine
+            from sqlalchemy import text as _sql
+            with sync_engine.connect() as conn:
+                row = conn.execute(
+                    _sql("SELECT company_name FROM ada_company_profile WHERE empresa_id = :eid"),
+                    {"eid": empresa_id}
+                ).fetchone()
+                if row and row.company_name:
+                    company_name_lower = row.company_name.lower().strip()
+                    if company_name_lower in msg_lower and any(w in msg_lower for w in ["sabes", "háblame", "hablame", "cuéntame", "cuentame", "información", "informacion", "qué es", "que es"]):
+                        print(f"ROUTER: Company name '{row.company_name}' detected -> my_company")
+                        return {"intent": "my_company", "confidence": 1.0, "routed_to": "chat_agent"}
+        except Exception as e:
+            print(f"ROUTER: Error checking company name: {e}")
 
     # WHITELIST: "qué sabes de mí" (exact match para no atrapar "qué sabes de mi empresa")
     my_memory_exact = [

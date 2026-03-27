@@ -362,7 +362,7 @@ def _render_chart(metrics, markdown_content=""):
             blocks.append(
                 '<div class="section">'
                 '<h2 class="section-title">' + title + '</h2>'
-                '<div class="chart-container" style="height:' + str(chart_height) + 'px">'
+                '<div class="chart-container" style="height:350px; max-width:500px; margin:0 auto;">'
                 '<canvas id="' + canvas_id + '"></canvas></div></div>'
                 '<script>'
                 'document.addEventListener("DOMContentLoaded", function() {'
@@ -372,7 +372,7 @@ def _render_chart(metrics, markdown_content=""):
                 '    data: { labels: ' + labels_json + ', datasets: [{ data: ' + values_json + ','
                 '      backgroundColor: isDark ? ' + dark_colors + ' : ' + light_colors + ','
                 '      borderColor: isDark ? "#0c1220" : "#ffffff", borderWidth: 2 }] },'
-                '    options: { responsive: true, maintainAspectRatio: false, cutout: "55%",'
+                '    options: { responsive: true, maintainAspectRatio: true, aspectRatio: 1.2, cutout: "55%",'
                 '      plugins: { legend: { position: "right", labels: { color: isDark ? "#9c9a92" : "#73726c", font: { size: 11 }, padding: 12,'
                 '        generateLabels: function(chart) { var d=chart.data; return d.labels.map(function(l,i){ return {text: l+" ("+d.datasets[0].data[i].toLocaleString("es-CO")+"%)", fillStyle: d.datasets[0].backgroundColor[i], hidden: false, index: i}; }); }'
                 '      } } }'
@@ -492,7 +492,8 @@ body {
     padding: 4px 12px; border-radius: 6px;
     background: var(--bg-tertiary); color: var(--text-secondary); margin-bottom: 12px;
 }
-.report-title { font-size: 28px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; }
+.report-title { font-size: 28px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; color: var(--text-primary); }
+@media (prefers-color-scheme: light) { .report-title { color: #1a365d; } }
 .report-meta { display: flex; gap: 8px; font-size: 13px; color: var(--text-tertiary); flex-wrap: wrap; }
 .section { margin-bottom: 2rem; }
 .section-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; }

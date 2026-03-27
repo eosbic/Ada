@@ -99,7 +99,7 @@ def _get_styles() -> dict:
     base = getSampleStyleSheet()
     return {
         "title": ParagraphStyle("PDFTitle", parent=base["Heading1"],
-            fontName="Helvetica-Bold", fontSize=18, textColor=C_BLACK,
+            fontName="Helvetica-Bold", fontSize=18, textColor=HexColor("#1a365d"),
             spaceAfter=2, leading=22),
         "subtitle": ParagraphStyle("PDFSubtitle", parent=base["Normal"],
             fontName="Helvetica", fontSize=9, textColor=C_GRAY_LIGHT,

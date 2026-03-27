@@ -191,7 +191,7 @@ def _save_pending(empresa_id: str, user_id: str, draft_type: str, draft_content:
             conn.execute(
                 sql_text("""
                     INSERT INTO pending_approvals (empresa_id, user_id, draft_type, draft_content, expires_at)
-                    VALUES (:eid, :uid, :dtype, :content::jsonb, NOW() + INTERVAL '1 hour')
+                    VALUES (:eid, :uid, :dtype, CAST(:content AS jsonb), NOW() + INTERVAL '1 hour')
                 """),
                 {
                     "eid": empresa_id, "uid": user_id,

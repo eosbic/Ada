@@ -216,6 +216,27 @@ def _fix_markdown_for_telegram(text: str) -> str:
     # 6. Bullets markdown → bullet unicode
     result = re.sub(r'^(\s*)-\s+', r'\1• ', result, flags=re.MULTILINE)
 
+    # 7. Agregar doble salto de línea antes de líneas que empiezan con emoji
+    import unicodedata
+    _section_prefixes = (
+        "📊", "💰", "📈", "📉", "🏆", "💡", "📅", "👥", "📝", "✉️",
+        "📋", "✅", "⚠️", "🔴", "📬", "🎯", "🤖", "🏢", "💼", "📦",
+        "📍", "🌐", "🎨", "📧", "💬", "📱", "🖼️", "⛔", "🟢", "🟡",
+        "EN RESUMEN", "ADEMÁS", "ALERTAS", "RECOMENDACION",
+    )
+    lines = result.split("\n")
+    spaced = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and i > 0:
+            first_char = stripped[0] if stripped else ""
+            is_emoji = first_char and unicodedata.category(first_char) == "So"
+            starts_with_emoji = is_emoji or any(stripped.startswith(e) for e in _section_prefixes)
+            if starts_with_emoji and spaced and spaced[-1].strip() != "":
+                spaced.append("")
+        spaced.append(line)
+    result = "\n".join(spaced)
+
     return result
 
 

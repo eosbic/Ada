@@ -237,7 +237,66 @@ def _fix_markdown_for_telegram(text: str) -> str:
         spaced.append(line)
     result = "\n".join(spaced)
 
+    # 8. Convertir tablas Markdown a formato lista (Telegram no soporta tablas)
+    result = _convert_tables_to_list(result)
+
+    # 9. Convertir headers ## a negrita
+    result = re.sub(r'^#{1,3}\s+(.+)$', r'**\1**', result, flags=re.MULTILINE)
+
     return result
+
+
+def _convert_tables_to_list(text: str) -> str:
+    """Convierte tablas Markdown a formato de lista legible en Telegram."""
+    lines = text.split("\n")
+    result = []
+    in_table = False
+    headers = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Detectar línea separadora de tabla (|---|---|)
+        if stripped.startswith("|") and set(stripped.replace("|", "").replace("-", "").replace(":", "").strip()) <= {" ", ""}:
+            in_table = True
+            continue
+
+        # Detectar fila de tabla
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+
+            if not in_table:
+                # Es el header
+                headers = cells
+                in_table = True
+                continue
+
+            # Es una fila de datos — formatear como lista
+            if headers and len(cells) == len(headers):
+                entry = ""
+                for h, c in zip(headers, cells):
+                    if c and c != "":
+                        h_clean = h.replace("**", "").strip()
+                        if h_clean:
+                            entry += f"  • {h_clean}: {c}\n"
+                        else:
+                            entry += f"  • {c}\n"
+                if entry:
+                    result.append(entry.rstrip())
+            else:
+                # Fallback: juntar celdas
+                entry = " | ".join(c for c in cells if c)
+                if entry:
+                    result.append(f"  • {entry}")
+        else:
+            # No es tabla — pasar tal cual
+            if in_table:
+                in_table = False
+                headers = []
+                result.append("")  # Espacio después de tabla
+            result.append(line)
+
+    return "\n".join(result)
 
 
 async def _send_markdown_safe(message_obj, text: str):

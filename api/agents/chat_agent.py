@@ -612,6 +612,79 @@ async def generate_response(state: ChatState) -> dict:
             response_text = "¿Qué quieres que recuerde?"
         return {"response": response_text, "model_used": "memory", "sources_used": []}
 
+    # Intent: follow-up de email
+    if state.get("intent") == "follow_up":
+        message = state.get("message", "")
+        try:
+            with sync_engine.connect() as conn:
+                last_email = conn.execute(
+                    sql_text("""
+                        SELECT id, to_email, to_name, subject, follow_up_enabled
+                        FROM email_followups
+                        WHERE user_id = :uid AND empresa_id = :eid
+                        AND status IN ('monitoring', 'follow_up_sent')
+                        ORDER BY sent_at DESC LIMIT 1
+                    """),
+                    {"uid": user_id, "eid": empresa_id}
+                ).fetchone()
+
+            if last_email:
+                if last_email.follow_up_enabled:
+                    to_display = last_email.to_name or last_email.to_email
+                    return {
+                        "response": f"Ya tengo configurado follow-up para el email a **{to_display}**. Te aviso cuando responda.",
+                        "model_used": "followup",
+                        "sources_used": [],
+                    }
+
+                # Parsear horas del mensaje
+                hours = 48
+                hours_match = re.search(r'(\d+)\s*(hora|horas|hour|hours|día|dias|día|dias|day|days)', message.lower())
+                if hours_match:
+                    num = int(hours_match.group(1))
+                    unit = hours_match.group(2)
+                    if "día" in unit or "dia" in unit or "day" in unit:
+                        hours = num * 24
+                    else:
+                        hours = num
+
+                with sync_engine.connect() as conn:
+                    conn.execute(
+                        sql_text("""
+                            UPDATE email_followups
+                            SET follow_up_enabled = TRUE,
+                                follow_up_after_hours = :hours
+                            WHERE id = :id
+                        """),
+                        {"id": str(last_email.id), "hours": hours}
+                    )
+                    conn.commit()
+
+                to_display = last_email.to_name or last_email.to_email
+                time_display = f"{hours} horas" if hours < 48 else f"{hours // 24} días"
+                return {
+                    "response": (
+                        f"✅ Follow-up activado.\n\n"
+                        f"📬 Si **{to_display}** no responde en **{time_display}**, le envío un recordatorio automáticamente.\n"
+                        f"📱 Te aviso por Telegram cuando responda o cuando envíe el follow-up."
+                    ),
+                    "model_used": "followup",
+                    "sources_used": [],
+                }
+            else:
+                return {
+                    "response": "No encuentro un email reciente para hacerle seguimiento. Primero envía un email y después configura el follow-up.",
+                    "model_used": "followup",
+                    "sources_used": [],
+                }
+        except Exception as e:
+            print(f"CHAT: Error configuring follow-up: {e}")
+            return {
+                "response": f"Error configurando follow-up: {e}",
+                "model_used": "error",
+                "sources_used": [],
+            }
+
     # Intent: onboarding
     if state.get("intent") == "onboarding":
         try:

@@ -17,6 +17,7 @@ from api.workers.event_worker import worker_loop
 from api.workers.drive_worker import drive_worker_loop
 from api.workers.morning_brief_worker import morning_brief_worker_loop
 from api.workers.alert_worker import alert_worker_loop
+from api.workers.email_monitor_worker import email_monitor_worker_loop
 from api.services.memory_service import init_qdrant
 
 
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(drive_worker_loop())
     asyncio.create_task(morning_brief_worker_loop())
     asyncio.create_task(alert_worker_loop())
+    asyncio.create_task(email_monitor_worker_loop())
     logger.info("Workers iniciados correctamente")
     yield
     logger.info("Ada V5.0 apagándose...")

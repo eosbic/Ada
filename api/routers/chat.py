@@ -270,8 +270,30 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                             "intent": "email",
                             "model_used": "hitl",
                         }
+
+                    # Crear tracking para monitoreo de respuesta
+                    to_addr = pending.get("to", "destinatario")
+                    try:
+                        from api.services.email_followup_service import create_followup
+                        create_followup(
+                            empresa_id=empresa_id,
+                            user_id=user_id,
+                            to_email=to_addr,
+                            to_name="",
+                            subject="",
+                            gmail_message_id="",
+                            gmail_thread_id="",
+                            context=pending.get("original_draft", "")[:200],
+                        )
+                    except Exception as e:
+                        print(f"HITL: Error creating followup tracking: {e}")
+
                     return {
-                        "response": f"Email enviado exitosamente a {pending.get('to', 'destinatario')}.",
+                        "response": (
+                            f"✅ Email enviado a **{to_addr}**.\n\n"
+                            f"📬 Estoy monitoreando la respuesta — te aviso cuando conteste.\n\n"
+                            f"💡 Si quieres que le haga follow-up automático si no responde, dime: \"recuérdale en 2 días\"."
+                        ),
                         "intent": "email",
                         "model_used": "hitl",
                     }
@@ -318,8 +340,25 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                 )
                 if draft_result.get("draft_id"):
                     send_result = gmail_send(draft_result["draft_id"], empresa_id=empresa_id, user_id=user_id)
+
+                    # Crear tracking para monitoreo de respuesta
+                    try:
+                        from api.services.email_followup_service import create_followup
+                        create_followup(
+                            empresa_id=empresa_id,
+                            user_id=user_id,
+                            to_email=edited_parts["to"],
+                            subject=edited_parts["subject"],
+                            context=edited_parts["body"][:200],
+                        )
+                    except Exception as e:
+                        print(f"HITL: Error creating followup tracking: {e}")
+
                     return {
-                        "response": f"Email editado y enviado a {edited_parts['to']}. Aprendí de tus correcciones para la próxima vez.",
+                        "response": (
+                            f"✅ Email editado y enviado a **{edited_parts['to']}**. Aprendí de tus correcciones.\n\n"
+                            f"📬 Estoy monitoreando la respuesta — te aviso cuando conteste."
+                        ),
                         "intent": "email",
                         "model_used": "hitl_learning",
                     }

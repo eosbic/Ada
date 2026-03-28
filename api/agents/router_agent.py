@@ -93,6 +93,7 @@ INTENT_AGENT_MAP = {
     "my_memories": "chat_agent",
     "explicit_memory": "chat_agent",
     "cross_agent": "cross_agent",
+    "follow_up": "chat_agent",
 }
 
 
@@ -198,6 +199,16 @@ async def classify_intent(state: RouterState) -> dict:
     if any(msg_lower.startswith(p) for p in urgent_patterns):
         print(f"ROUTER: cross_agent detected (internal message)")
         return {"intent": "cross_agent", "confidence": 1.0, "routed_to": "cross_agent"}
+
+    # WHITELIST: configurar follow-up de email
+    follow_up_triggers = [
+        "si no responde", "si no contesta", "si no contestan",
+        "recuérdale", "recuerdale", "follow up", "follow-up", "followup",
+        "hazle seguimiento", "dale seguimiento",
+    ]
+    if any(trigger in msg_lower for trigger in follow_up_triggers):
+        print(f"ROUTER: follow_up detected")
+        return {"intent": "follow_up", "confidence": 1.0, "routed_to": "chat_agent"}
 
     model, _ = selector.get_model("routing")
 

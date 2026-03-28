@@ -118,6 +118,12 @@ async def plan_workflow(state: CrossState) -> dict:
     user_id = state.get("user_id", "")
     message = state.get("message", "")
 
+    # Extraer mensaje real si viene enriquecido con contexto
+    if "MENSAJE ACTUAL:" in message:
+        message = message.split("MENSAJE ACTUAL:")[-1].strip()
+    elif "[CONTEXTO CONVERSACIONAL RECIENTE:" in message:
+        message = message.split("]")[-1].strip()
+
     # Timezone de la empresa para calcular "hoy" y "mañana" correctamente
     tz = _get_company_tz(empresa_id)
     today = datetime.now(tz)

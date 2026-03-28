@@ -84,9 +84,13 @@ def _is_iso_datetime(value: str) -> bool:
 async def classify_calendar_action(state: CalendarState) -> dict:
     model, model_name = selector.get_model("routing")
 
-    # Limpiar contexto conversacional residual si se coló
+    # Extraer mensaje real si viene enriquecido con contexto
     msg = state.get("message", "")
-    for marker in ["[CONTEXTO CONVERSACIONAL RECIENTE:", "CONVERSACIÓN RECIENTE:"]:
+    if "MENSAJE ACTUAL:" in msg:
+        msg = msg.split("MENSAJE ACTUAL:")[-1].strip()
+    elif "[CONTEXTO CONVERSACIONAL RECIENTE:" in msg:
+        msg = msg.split("]")[-1].strip()
+    for marker in ["CONVERSACIÓN RECIENTE:", "CONTEXTO CONVERSACIONAL RECIENTE:"]:
         if marker in msg:
             msg = msg.split(marker)[0].strip()
 
@@ -145,7 +149,13 @@ async def execute_calendar_action(state: CalendarState) -> dict:
         }
 
     if action == "search":
-        query = params.get("query", state.get("message", ""))
+        query = params.get("query", "")
+        if not query:
+            raw_msg = state.get("message", "")
+            if "MENSAJE ACTUAL:" in raw_msg:
+                query = raw_msg.split("MENSAJE ACTUAL:")[-1].strip()
+            else:
+                query = raw_msg
         events = calendar_search_events(query, empresa_id=empresa_id, user_id=user_id)
         if not events:
             return {

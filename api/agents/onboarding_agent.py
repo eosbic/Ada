@@ -58,6 +58,66 @@ async def process_onboarding(
 ) -> dict:
     """Procesa un paso del onboarding. Retorna pregunta actual."""
 
+    def _build_oauth_message(suite, eid, uid, ada_name, company_name, prefix=""):
+        """Genera el mensaje de conexión OAuth sin depender de fall-through."""
+        if suite == "google":
+            client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+            redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "https://backend-ada.duckdns.org/oauth/callback")
+            scopes = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/contacts.readonly"
+            state_str = f"{eid}|google|{uid}"
+            if client_id:
+                oauth_url = (
+                    f"https://accounts.google.com/o/oauth2/v2/auth?"
+                    f"client_id={client_id}&"
+                    f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
+                    f"response_type=code&"
+                    f"scope={urllib.parse.quote(scopes)}&"
+                    f"access_type=offline&prompt=consent&"
+                    f"state={urllib.parse.quote(state_str)}"
+                )
+            else:
+                oauth_url = f"https://backend-ada.duckdns.org/oauth/connect/google/{eid}?user_id={uid}"
+            provider_name = "Google Workspace"
+            details = "Gmail, Calendar, Contactos y Drive"
+        elif suite in ("microsoft", "microsoft365", "outlook"):
+            oauth_url = f"https://backend-ada.duckdns.org/oauth/microsoft/connect/microsoft365/{eid}?user_id={uid}"
+            provider_name = "Microsoft 365"
+            details = "Outlook, Calendar, Contactos y OneDrive"
+        else:
+            return None
+
+        return {
+            "step": "connect_oauth",
+            "message": (
+                f"{prefix}"
+                f"📧 **Paso 2 — Conectar {provider_name}:**\n\n"
+                f"Necesito acceso a tu {details}.\n\n"
+                f"👉 Haz click en este enlace para autorizar:\n{oauth_url}\n\n"
+                f"Cuando termine, escribe **listo**.\n"
+                f"Si prefieres después, escribe **saltar**."
+            ),
+            "completed": False,
+        }
+
+    def _build_complete_message(ada_name, company_name, pm_skip_note=""):
+        """Genera mensaje de onboarding completado."""
+        extra = f"Puedes conectar {pm_skip_note} después desde el portal.\n\n" if pm_skip_note else ""
+        return {
+            "step": "complete",
+            "message": (
+                f"🎉 **¡Todo listo!** {ada_name} está completamente configurada para {company_name}.\n\n"
+                f"{extra}"
+                f"Ya puedo ayudarte con:\n"
+                f"• 📧 Leer y escribir emails\n"
+                f"• 📅 Gestionar tu agenda\n"
+                f"• 📊 Analizar reportes y datos\n"
+                f"• 👥 Buscar info de contactos\n"
+                f"• 🎯 Perfilar prospectos\n\n"
+                f"¿En qué te ayudo primero?"
+            ),
+            "completed": True,
+        }
+
     session = _onboarding_sessions.get(empresa_id, {
         "step": "welcome",
         "company_data": {"admin_data": {}},
@@ -900,7 +960,21 @@ async def process_onboarding(
         if user_telegram_linked:
             session["step"] = "connect_oauth"
             _onboarding_sessions[empresa_id] = session
-            # Caer al handler de connect_oauth abajo
+            suite = company_data.get("productivity_suite", "google")
+            prefix = (
+                f"✅ ¡{ada_name} está configurada para {company_data.get('company_name', 'tu empresa')}!\n\n"
+                f"🔄 Estoy analizando tu sitio web y competidores en segundo plano.\n\n"
+            )
+            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_data.get("company_name", ""), prefix)
+            if oauth_msg:
+                return oauth_msg
+            # No suite → skip to PM
+            session["step"] = "connect_pm"
+            _onboarding_sessions[empresa_id] = session
+            pm_tool = company_data.get("pm_tool", "")
+            if not pm_tool or pm_tool in ("none", "ninguno"):
+                _onboarding_sessions.pop(empresa_id, None)
+                return _build_complete_message(ada_name, company_data.get("company_name", "tu empresa"))
         else:
             return {
                 "step": "connect_telegram",
@@ -922,7 +996,18 @@ async def process_onboarding(
         if user_response.lower().strip() in ("listo", "ya", "done", "ok", "siguiente", "saltar", "skip", "después", "despues"):
             session["step"] = "connect_oauth"
             _onboarding_sessions[empresa_id] = session
-            # Caer a connect_oauth
+            suite = company_data.get("productivity_suite", "google")
+            ada_name = company_data.get("ada_name", "Ada")
+            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_data.get("company_name", ""))
+            if oauth_msg:
+                return oauth_msg
+            # No suite → skip to PM
+            session["step"] = "connect_pm"
+            _onboarding_sessions[empresa_id] = session
+            pm_tool = company_data.get("pm_tool", "")
+            if not pm_tool or pm_tool in ("none", "ninguno"):
+                _onboarding_sessions.pop(empresa_id, None)
+                return _build_complete_message(ada_name, company_data.get("company_name", "tu empresa"))
         else:
             return {
                 "step": "connect_telegram",
@@ -954,7 +1039,17 @@ async def process_onboarding(
         if already_connected:
             session["step"] = "connect_pm"
             _onboarding_sessions[empresa_id] = session
-            # Caer a connect_pm
+            ada_name = company_data.get("ada_name", "Ada")
+            company_name = company_data.get("company_name", "tu empresa")
+            pm_tool = company_data.get("pm_tool", "")
+            if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
+                _onboarding_sessions.pop(empresa_id, None)
+                return _build_complete_message(ada_name, company_name)
+            return {
+                "step": "connect_pm",
+                "message": f"✅ {suite.title()} ya estaba conectado.\n\n",
+                "completed": False,
+            }
         elif response_lower in ("listo", "ya", "done", "ok", "siguiente", "conectado"):
             # Re-verificar
             try:
@@ -987,7 +1082,18 @@ async def process_onboarding(
         elif response_lower in ("saltar", "skip", "después", "despues"):
             session["step"] = "connect_pm"
             _onboarding_sessions[empresa_id] = session
-            # Caer a connect_pm
+            ada_name = company_data.get("ada_name", "Ada")
+            company_name = company_data.get("company_name", "tu empresa")
+            pm_tool = company_data.get("pm_tool", "")
+            if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
+                _onboarding_sessions.pop(empresa_id, None)
+                return _build_complete_message(ada_name, company_name)
+            # Has PM tool — show PM instructions on next message
+            return {
+                "step": "connect_pm",
+                "message": f"OK, puedes conectar {suite.title()} después.\n\n",
+                "completed": False,
+            }
         else:
             # Primera vez — mostrar link
             if suite == "google":
@@ -1037,6 +1143,17 @@ async def process_onboarding(
             else:
                 session["step"] = "connect_pm"
                 _onboarding_sessions[empresa_id] = session
+                ada_name = company_data.get("ada_name", "Ada")
+                company_name = company_data.get("company_name", "tu empresa")
+                pm_tool = company_data.get("pm_tool", "")
+                if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
+                    _onboarding_sessions.pop(empresa_id, None)
+                    return _build_complete_message(ada_name, company_name)
+                return {
+                    "step": "connect_pm",
+                    "message": "",
+                    "completed": False,
+                }
 
     # ─── CONNECT PM ──────────────────────────────────
     if step == "connect_pm":

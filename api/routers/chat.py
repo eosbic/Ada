@@ -318,6 +318,29 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
             # El usuario quiere modificar el borrador (corrección o edición directa)
             original_draft = pending.get("original_draft", "")
 
+            # Si original_draft está vacío, reconstruir desde el historial
+            if not original_draft:
+                try:
+                    from api.agents.chat_agent import get_history
+                    history = get_history(empresa_id, user_id)
+                    for msg in reversed(history[-6:]):
+                        if msg.get("role") == "assistant" and "Borrador" in msg.get("content", ""):
+                            content = msg["content"]
+                            to_match = re.search(r'\*?\*?Para:\*?\*?\s*(\S+)', content)
+                            subject_match = re.search(r'\*?\*?Asunto:\*?\*?\s*(.+?)(?:\n|$)', content)
+                            body_match = re.search(r'\*?\*?Cuerpo:\*?\*?\s*\n(.*?)(?:\n---|\Z)', content, re.DOTALL)
+
+                            to_val = to_match.group(1).strip("*") if to_match else pending.get("to", "")
+                            subj_val = subject_match.group(1).strip().strip("*") if subject_match else ""
+                            body_val = body_match.group(1).strip() if body_match else ""
+
+                            if body_val:
+                                original_draft = f"Para: {to_val}\nAsunto: {subj_val}\n\n{body_val}"
+                                print(f"HITL: Reconstructed original_draft from history")
+                            break
+                except Exception as e:
+                    print(f"HITL: Error reconstructing original_draft: {e}")
+
             # Usar LLM para interpretar la corrección y aplicarla al borrador
             to = pending.get("to", "")
             subject = ""

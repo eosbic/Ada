@@ -29,6 +29,7 @@ class EmailState(TypedDict, total=False):
     action_result: dict
     needs_approval: bool
     draft_id: str
+    original_draft: str
 
     # Output
     response: str

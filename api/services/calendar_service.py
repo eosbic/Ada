@@ -6,7 +6,7 @@ Multi-tenant: cada empresa usa SU Calendar.
 
 import os
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
@@ -58,9 +58,9 @@ def calendar_list_events(
     try:
         service = _get_calendar_service(empresa_id, user_id=user_id)
 
-        now = datetime.utcnow()
-        time_min = now.isoformat() + "Z"
-        time_max = (now + timedelta(days=days_ahead)).isoformat() + "Z"
+        now = datetime.now(timezone.utc)
+        time_min = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        time_max = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         result = service.events().list(
             calendarId=calendar_id,
@@ -107,9 +107,9 @@ def calendar_search_events(
     try:
         service = _get_calendar_service(empresa_id, user_id=user_id)
 
-        now = datetime.utcnow()
-        time_min = now.isoformat() + "Z"
-        time_max = (now + timedelta(days=days_ahead)).isoformat() + "Z"
+        now = datetime.now(timezone.utc)
+        time_min = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        time_max = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         result = service.events().list(
             calendarId=calendar_id,

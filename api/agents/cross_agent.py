@@ -12,6 +12,7 @@ Lógica de selección de canal:
 import json
 from datetime import datetime, timedelta
 from typing import TypedDict
+from zoneinfo import ZoneInfo
 
 from langgraph.graph import StateGraph, END
 from models.selector import selector
@@ -24,6 +25,25 @@ from api.services.calendar_service import (
 )
 from api.services.gmail_service import gmail_draft
 from api.agents.chat_agent import get_history
+
+
+def _get_company_tz(empresa_id: str) -> ZoneInfo:
+    """Obtiene timezone de la empresa desde ada_company_profile."""
+    tz_name = "America/Bogota"
+    if empresa_id:
+        try:
+            from api.database import sync_engine
+            from sqlalchemy import text as sql_text
+            with sync_engine.connect() as conn:
+                row = conn.execute(
+                    sql_text("SELECT timezone FROM ada_company_profile WHERE empresa_id = :eid"),
+                    {"eid": empresa_id}
+                ).fetchone()
+                if row and row.timezone:
+                    tz_name = row.timezone
+        except Exception:
+            pass
+    return ZoneInfo(tz_name)
 
 
 class CrossState(TypedDict, total=False):
@@ -98,7 +118,9 @@ async def plan_workflow(state: CrossState) -> dict:
     user_id = state.get("user_id", "")
     message = state.get("message", "")
 
-    today = datetime.now()
+    # Timezone de la empresa para calcular "hoy" y "mañana" correctamente
+    tz = _get_company_tz(empresa_id)
+    today = datetime.now(tz)
     tomorrow = today + timedelta(days=1)
     weekdays_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
@@ -147,6 +169,7 @@ async def execute_calendar(state: CrossState) -> dict:
     if cal_action == "none":
         return {"calendar_result": {"status": "skipped"}}
 
+    tz = _get_company_tz(empresa_id)
     result = {}
 
     try:
@@ -187,7 +210,7 @@ async def execute_calendar(state: CrossState) -> dict:
                         start_dt = datetime.fromisoformat(new_date)
                         end_dt = start_dt + timedelta(minutes=duration)
                     except Exception:
-                        start_dt = datetime.now() + timedelta(days=7)
+                        start_dt = datetime.now(tz) + timedelta(days=7)
                         end_dt = start_dt + timedelta(minutes=60)
 
                     calendar_update_event(
@@ -210,7 +233,7 @@ async def execute_calendar(state: CrossState) -> dict:
                 try:
                     start_dt = datetime.fromisoformat(date)
                 except Exception:
-                    start_dt = datetime.now() + timedelta(days=7)
+                    start_dt = datetime.now(tz) + timedelta(days=7)
                 end_dt = start_dt + timedelta(minutes=duration)
                 calendar_create_event(
                     summary=title, start_datetime=start_dt.isoformat(),

@@ -5,9 +5,29 @@ Calendar Agent - protocolo operacional estricto.
 import json
 from datetime import datetime, timedelta
 from typing import TypedDict
+from zoneinfo import ZoneInfo
 
 from langgraph.graph import StateGraph, END
 from models.selector import selector
+def _get_company_tz(empresa_id: str) -> ZoneInfo:
+    """Obtiene timezone de la empresa desde ada_company_profile."""
+    tz_name = "America/Bogota"
+    if empresa_id:
+        try:
+            from api.database import sync_engine
+            from sqlalchemy import text as sql_text
+            with sync_engine.connect() as conn:
+                row = conn.execute(
+                    sql_text("SELECT timezone FROM ada_company_profile WHERE empresa_id = :eid"),
+                    {"eid": empresa_id}
+                ).fetchone()
+                if row and row.timezone:
+                    tz_name = row.timezone
+        except Exception:
+            pass
+    return ZoneInfo(tz_name)
+
+
 from api.services.calendar_service import (
     calendar_list_events,
     calendar_search_events,
@@ -35,6 +55,8 @@ class CalendarState(TypedDict, total=False):
 
 CALENDAR_SYSTEM_PROMPT = """Eres Ada, asistente ejecutiva de agenda.
 
+HOY es {today} ({weekday}). "mañana" = {tomorrow}.
+
 Protocolo estricto:
 - crear evento: primero availability, luego create_event
 - actualizar evento: primero get_events/search, luego update_event
@@ -42,10 +64,10 @@ Protocolo estricto:
 - Fechas SIEMPRE ISO 8601 completo: YYYY-MM-DDTHH:MM:SS
 
 Responde SOLO JSON:
-{
+{{
   "action": "list|search|create|update|delete|availability",
-  "params": {}
-}
+  "params": {{}}
+}}
 """
 
 
@@ -68,8 +90,21 @@ async def classify_calendar_action(state: CalendarState) -> dict:
         if marker in msg:
             msg = msg.split(marker)[0].strip()
 
+    # Timezone de la empresa para resolver "hoy", "mañana", etc.
+    empresa_id = state.get("empresa_id", "")
+    tz = _get_company_tz(empresa_id)
+    today = datetime.now(tz)
+    tomorrow = today + timedelta(days=1)
+    weekdays_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+    system_prompt = CALENDAR_SYSTEM_PROMPT.format(
+        today=today.strftime("%Y-%m-%d"),
+        weekday=weekdays_es[today.weekday()],
+        tomorrow=tomorrow.strftime("%Y-%m-%d"),
+    )
+
     response = await model.ainvoke([
-        {"role": "system", "content": CALENDAR_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": msg},
     ])
 

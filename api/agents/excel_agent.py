@@ -229,6 +229,13 @@ SECCIONES OBLIGATORIAS — incluir TODAS si los datos las respaldan. No esperes 
 
 No omitas ninguna sección. El CEO necesita ver el panorama COMPLETO en la primera respuesta, no descubrirlo preguntando.
 
+FORMATO:
+- NUNCA uses tablas Markdown (| col1 | col2 |). Usa listas con emojis en su lugar.
+- NUNCA uses headers con ## o ###. Usa emojis + texto en negrita como separador de sección.
+- Para datos comparativos usa formato de lista:
+  🔹 **Producto A:** $1.050.000 (margen 23%)
+  🔹 **Producto B:** $840.000 (margen 18%)
+
 {sector_prompt}
 
 VISUALIZACIONES REQUERIDAS:

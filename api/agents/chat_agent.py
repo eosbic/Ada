@@ -166,10 +166,16 @@ REGLA 5 — BREVEDAD:
 - Números en formato colombiano: $51.853M (no $51853000)
 - Porcentajes con contexto: "27,1% del total" no solo "27,1%"
 
-REGLA 6 — FORMATO MARKDOWN ESTÁNDAR:
+REGLA 6 — FORMATO COMPATIBLE CON TELEGRAM:
 - Usar **negrita** para etiquetas y títulos
 - Usar • (punto medio) para listas dentro de secciones
-- NO usar HTML. NO usar MarkdownV2 de Telegram
+- NUNCA usar tablas Markdown (| col1 | col2 |). Usar listas con emojis en su lugar.
+- NUNCA usar headers con ## o ###. Usar emojis + texto en negrita como separador de sección.
+- Para datos tabulares, usar formato de lista:
+  Incorrecto: | Producto | Precio |
+  Correcto:
+  🔹 **Producto:** Agentes de IA
+     💰 **Precio:** $299/mes
 - Compatible con Telegram y portal web
 
 REGLA DE CONTEXTO CONVERSACIONAL:

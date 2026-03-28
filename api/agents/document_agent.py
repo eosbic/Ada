@@ -108,6 +108,8 @@ Reglas:
 3) Recomendaciones accionables
 4) Citar fuente [{file_name}]
 5) Al final indicar Fuente primaria y secundaria
+6) NUNCA uses tablas Markdown (| col1 | col2 |). Usa listas con emojis.
+7) NUNCA uses headers con ## o ###. Usa emojis + texto en negrita como separador de sección.
 
 {sector_prompt}
 """

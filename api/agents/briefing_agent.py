@@ -252,6 +252,8 @@ Archivo: {file_name}
 5. **Oferta proactiva**: Ofrece al CEO ejecutar una acción: "¿Quieres que prepare el borrador del email de negociación?" o "¿Agendo una reunión con el equipo comercial?"
 
 FORMATO: Profesional, directo, español. Emojis semánticos. NO inventes datos que no estén en el contexto.
+NUNCA uses tablas Markdown (| col1 | col2 |). Usa listas con emojis.
+NUNCA uses headers con ## o ###. Usa emojis + texto en negrita como separador de sección.
 Si no encontraste cruces, dilo honestamente pero igual da recomendaciones basadas en los datos del análisis."""
 
     response = await model.ainvoke([

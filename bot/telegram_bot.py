@@ -178,76 +178,8 @@ def _sanitize_text(text: str) -> str:
     return "".join(cleaned_chars)
 
 
-def _fix_markdown_for_telegram(text: str) -> str:
-    """Arregla Markdown para que Telegram lo acepte."""
-    result = text
-
-    # 1. Proteger URLs
-    urls = re.findall(r'https?://[^\s\)]+', result)
-    url_placeholders = {}
-    for i, url in enumerate(urls):
-        placeholder = f"__URL_PLACEHOLDER_{i}__"
-        url_placeholders[placeholder] = url
-        result = result.replace(url, placeholder)
-
-    # 2. Proteger emails
-    emails = re.findall(r'[\w.-]+@[\w.-]+\.\w+', result)
-    email_placeholders = {}
-    for i, email in enumerate(emails):
-        placeholder = f"__EMAIL_PLACEHOLDER_{i}__"
-        email_placeholders[placeholder] = email
-        result = result.replace(email, placeholder)
-
-    # 3. Verificar que ** estén balanceados
-    count_bold = result.count("**")
-    if count_bold % 2 != 0:
-        last_pos = result.rfind("**")
-        result = result[:last_pos] + result[last_pos+2:]
-
-    # 4. Reemplazar * sueltos (no **) con • para evitar cursiva rota
-    result = re.sub(r'(?<!\*)\*(?!\*)', '•', result)
-
-    # 5. Restaurar URLs y emails
-    for placeholder, url in url_placeholders.items():
-        result = result.replace(placeholder, url)
-    for placeholder, email in email_placeholders.items():
-        result = result.replace(placeholder, email)
-
-    # 6. Bullets markdown → bullet unicode
-    result = re.sub(r'^(\s*)-\s+', r'\1• ', result, flags=re.MULTILINE)
-
-    # 7. Agregar doble salto de línea antes de líneas que empiezan con emoji
-    import unicodedata
-    _section_prefixes = (
-        "📊", "💰", "📈", "📉", "🏆", "💡", "📅", "👥", "📝", "✉️",
-        "📋", "✅", "⚠️", "🔴", "📬", "🎯", "🤖", "🏢", "💼", "📦",
-        "📍", "🌐", "🎨", "📧", "💬", "📱", "🖼️", "⛔", "🟢", "🟡",
-        "EN RESUMEN", "ADEMÁS", "ALERTAS", "RECOMENDACION",
-    )
-    lines = result.split("\n")
-    spaced = []
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped and i > 0:
-            first_char = stripped[0] if stripped else ""
-            is_emoji = first_char and unicodedata.category(first_char) == "So"
-            starts_with_emoji = is_emoji or any(stripped.startswith(e) for e in _section_prefixes)
-            if starts_with_emoji and spaced and spaced[-1].strip() != "":
-                spaced.append("")
-        spaced.append(line)
-    result = "\n".join(spaced)
-
-    # 8. Convertir tablas Markdown a formato lista (Telegram no soporta tablas)
-    result = _convert_tables_to_list(result)
-
-    # 9. Convertir headers ## a negrita
-    result = re.sub(r'^#{1,3}\s+(.+)$', r'**\1**', result, flags=re.MULTILINE)
-
-    return result
-
-
 def _convert_tables_to_list(text: str) -> str:
-    """Convierte tablas Markdown a formato de lista legible en Telegram."""
+    """Convierte tablas Markdown a formato de lista legible."""
     lines = text.split("\n")
     result = []
     in_table = False
@@ -299,13 +231,119 @@ def _convert_tables_to_list(text: str) -> str:
     return "\n".join(result)
 
 
-async def _send_markdown_safe(message_obj, text: str):
-    """Envía mensaje con Markdown. Si falla, envía sin formato."""
+def _markdown_to_html(text: str) -> str:
+    """Convierte Markdown del LLM a HTML compatible con Telegram."""
+    import unicodedata
+
+    result = text
+
+    # 1. Convertir tablas Markdown a formato lista
+    result = _convert_tables_to_list(result)
+
+    # 2. Escapar caracteres HTML peligrosos ANTES de insertar tags
+    #    Proteger URLs, emails, y bloques de código primero
+    urls = re.findall(r'https?://[^\s\)\]>]+', result)
+    url_placeholders = {}
+    for i, url in enumerate(urls):
+        placeholder = f"__URL_{i}__"
+        url_placeholders[placeholder] = url
+        result = result.replace(url, placeholder)
+
+    emails_found = re.findall(r'[\w.-]+@[\w.-]+\.\w+', result)
+    email_placeholders = {}
+    for i, email in enumerate(emails_found):
+        placeholder = f"__EMAIL_{i}__"
+        email_placeholders[placeholder] = email
+        result = result.replace(email, placeholder)
+
+    # Proteger code blocks
+    code_blocks = []
+    def _save_code_block(m):
+        code_blocks.append(m.group(1))
+        return f"__CODEBLOCK_{len(code_blocks) - 1}__"
+    result = re.sub(r'```[\w]*\n?(.*?)```', _save_code_block, result, flags=re.DOTALL)
+
+    # Proteger inline code
+    inline_codes = []
+    def _save_inline_code(m):
+        inline_codes.append(m.group(1))
+        return f"__INLINE_{len(inline_codes) - 1}__"
+    result = re.sub(r'`([^`]+)`', _save_inline_code, result)
+
+    # 3. Escapar & < >
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+
+    # 4. Headers ## → bold
+    result = re.sub(r'^#{1,3}\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
+
+    # 5. Bold: **texto** → <b>texto</b>
+    #    Verificar balanceo primero
+    count_bold = result.count("**")
+    if count_bold % 2 != 0:
+        last_pos = result.rfind("**")
+        result = result[:last_pos] + result[last_pos + 2:]
+    result = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', result)
+
+    # 6. Italic: _texto_ → <i>texto</i> (solo si no es parte de variable/URL)
+    result = re.sub(r'(?<!\w)_([^_]+?)_(?!\w)', r'<i>\1</i>', result)
+
+    # 7. Reemplazar * sueltos (no parte de **) con •
+    result = re.sub(r'(?<!\*)\*(?!\*)', '•', result)
+
+    # 8. Bullets markdown → bullet unicode
+    result = re.sub(r'^(\s*)-\s+', r'\1• ', result, flags=re.MULTILINE)
+
+    # 9. Restaurar code blocks como <pre>
+    for i, block in enumerate(code_blocks):
+        safe_block = block.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        result = result.replace(f"__CODEBLOCK_{i}__", f"<pre>{safe_block}</pre>")
+
+    # 10. Restaurar inline code como <code>
+    for i, code in enumerate(inline_codes):
+        safe_code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        result = result.replace(f"__INLINE_{i}__", f"<code>{safe_code}</code>")
+
+    # 11. Restaurar URLs y emails
+    for placeholder, url in url_placeholders.items():
+        result = result.replace(placeholder, url)
+    for placeholder, email in email_placeholders.items():
+        result = result.replace(placeholder, email)
+
+    # 12. Agregar doble salto de línea antes de secciones con emoji
+    _section_prefixes = (
+        "📊", "💰", "📈", "📉", "🏆", "💡", "📅", "👥", "📝", "✉️",
+        "📋", "✅", "⚠️", "🔴", "📬", "🎯", "🤖", "🏢", "💼", "📦",
+        "📍", "🌐", "🎨", "📧", "💬", "📱", "🖼️", "⛔", "🟢", "🟡",
+        "EN RESUMEN", "ADEMÁS", "ALERTAS", "RECOMENDACION",
+    )
+    lines = result.split("\n")
+    spaced = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and i > 0:
+            first_char = stripped[0] if stripped else ""
+            is_emoji = first_char and unicodedata.category(first_char) == "So"
+            starts_with_emoji = is_emoji or any(stripped.startswith(e) for e in _section_prefixes)
+            if starts_with_emoji and spaced and spaced[-1].strip() != "":
+                spaced.append("")
+        spaced.append(line)
+    result = "\n".join(spaced)
+
+    # 13. Limpiar saltos de línea excesivos
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result.strip()
+
+
+async def _send_html_safe(message_obj, text: str):
+    """Envía mensaje en HTML. Si falla, envía sin formato."""
     try:
-        await message_obj.reply_text(text, parse_mode="Markdown")
+        await message_obj.reply_text(text, parse_mode="HTML")
     except Exception as e:
-        print(f"TELEGRAM BOT: Markdown parse failed ({e}), sending plain text")
-        clean = text.replace("**", "").replace("__", "").replace("```", "").replace("`", "")
+        print(f"TELEGRAM BOT: HTML parse failed ({e}), sending plain text")
+        clean = re.sub(r'<[^>]+>', '', text)
         try:
             await message_obj.reply_text(clean)
         except Exception as e2:
@@ -315,15 +353,15 @@ async def _send_markdown_safe(message_obj, text: str):
 
 async def _safe_send_text(update: Update, processing_msg, text: str):
     sanitized = _sanitize_text(text)
-    formatted = _fix_markdown_for_telegram(sanitized)
-    chunks = _split_text(formatted, max_len=3900)
+    html = _markdown_to_html(sanitized)
+    chunks = _split_text(html, max_len=3900)
     first = chunks[0] if chunks else "Sin contenido."
 
-    print(f"TELEGRAM BOT: sending {len(chunks)} chunk(s) with Markdown")
-    await _send_markdown_safe(update.message, first)
+    print(f"TELEGRAM BOT: sending {len(chunks)} chunk(s) with HTML")
+    await _send_html_safe(update.message, first)
 
     for extra in chunks[1:]:
-        await _send_markdown_safe(update.message, extra)
+        await _send_html_safe(update.message, extra)
 
     try:
         if processing_msg:
@@ -571,13 +609,35 @@ async def _send_file_to_upload(update: Update, user_data: dict, file_name: str, 
         else:
             response_text = response_text[:4000]
 
-        await processing_msg.edit_text(response_text)
+        # Si el informe tiene tablas Markdown, enviarlas como imágenes
+        try:
+            from api.services.report_image_service import text_has_tables, extract_tables_from_markdown, generate_table_image
+            if text_has_tables(response_text):
+                tables = extract_tables_from_markdown(response_text)
+                for tbl in tables[:3]:  # Máximo 3 tablas como imagen
+                    try:
+                        img_bio = generate_table_image(tbl["title"], tbl["headers"], tbl["rows"])
+                        await update.message.reply_photo(photo=img_bio, caption=f"📊 {tbl['title']}")
+                    except Exception as img_err:
+                        print(f"TELEGRAM BOT: Error generating table image: {img_err}")
+        except ImportError:
+            pass
+        except Exception as img_err:
+            print(f"TELEGRAM BOT: Table image error: {img_err}")
+
+        html_text = _markdown_to_html(_sanitize_text(response_text))
+        try:
+            await processing_msg.edit_text(html_text, parse_mode="HTML")
+        except Exception:
+            clean = re.sub(r'<[^>]+>', '', html_text)
+            await processing_msg.edit_text(clean[:4000])
 
         alerts = data.get("alerts", [])
         if alerts:
             alert_text = "\n".join([a.get("message", "") for a in alerts[:5]])
             if alert_text.strip():
-                await update.message.reply_text(f"Alertas:\n\n{alert_text[:4000]}")
+                alert_html = _markdown_to_html(_sanitize_text(alert_text[:4000]))
+                await _send_html_safe(update.message, f"<b>Alertas:</b>\n\n{alert_html}")
 
     except httpx.TimeoutException:
         await processing_msg.edit_text("El analisis tomo demasiado tiempo.")

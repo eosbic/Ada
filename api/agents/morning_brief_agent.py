@@ -259,6 +259,8 @@ Fecha: {today}
 6. Cierre motivacional de 1 oración
 
 FORMATO: Directo, profesional, español. Emojis semánticos. Sin markdown excesivo.
+NUNCA uses tablas Markdown (| col1 | col2 |). Usa listas con emojis.
+NUNCA uses headers con ## o ###. Usa emojis + texto en negrita como separador de sección.
 NO inventes datos. Si algo no tiene info, sáltalo."""
 
     response = await model.ainvoke([

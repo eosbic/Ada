@@ -71,17 +71,16 @@ async def search_market_signals(
     return signals
 
 
-# --- APOLLO.IO: Busqueda de leads ---
+# --- APOLLO.IO: Busqueda y enriquecimiento de empresas ---
 
-async def search_leads_apollo(
+async def search_and_enrich_companies(
     empresa_id: str,
     company_name: str = "",
     company_domain: str = "",
-    titles: list = None,
     location: str = "",
     max_results: int = 5,
 ) -> list:
-    """Busca leads en Apollo.io (free tier: org search + top people)."""
+    """Busca y enriquece empresas con Apollo.io (free tier compatible)."""
     creds = get_service_credentials(empresa_id, "apollo")
     if "error" in creds:
         print("PROSPECT SEARCH: Apollo no configurado")
@@ -91,82 +90,70 @@ async def search_leads_apollo(
     if not api_key:
         return []
 
-    headers = {"Content-Type": "application/json", "X-Api-Key": api_key}
+    companies = []
 
     try:
-        # Paso 1: Buscar organizacion
-        org_id = ""
+        # Paso 1: Buscar organizaciones
         async with httpx.AsyncClient(timeout=20) as client:
-            org_resp = await client.post(
+            resp = await client.post(
                 "https://api.apollo.io/api/v1/organizations/search",
-                headers=headers,
+                headers={"Content-Type": "application/json", "X-Api-Key": api_key},
                 json={
-                    "q_organization_name": company_name or location,
-                    "page": 1,
-                    "per_page": 1,
-                },
-            )
-            if org_resp.status_code == 200:
-                orgs = org_resp.json().get("organizations", [])
-                if orgs:
-                    org_id = orgs[0].get("id", "")
-
-        if not org_id and company_domain:
-            # Intentar con enrichment si tiene domain
-            async with httpx.AsyncClient(timeout=20) as client:
-                enrich_resp = await client.get(
-                    "https://api.apollo.io/api/v1/organizations/enrich",
-                    headers={"X-Api-Key": api_key},
-                    params={"domain": company_domain},
-                )
-                if enrich_resp.status_code == 200:
-                    org_data = enrich_resp.json().get("organization", {})
-                    org_id = org_data.get("id", "")
-
-        if not org_id:
-            print(f"PROSPECT SEARCH: Apollo - org not found for {company_name}")
-            return []
-
-        # Paso 2: Buscar top people de la organizacion
-        async with httpx.AsyncClient(timeout=20) as client:
-            people_resp = await client.post(
-                "https://api.apollo.io/api/v1/mixed_people/organization_top_people",
-                headers=headers,
-                json={
-                    "organization_id": org_id,
+                    "q_organization_name": company_name or "",
+                    "organization_locations": [location] if location else [],
                     "page": 1,
                     "per_page": max_results,
                 },
             )
 
-        if people_resp.status_code == 200:
-            people = people_resp.json().get("people", [])
-            leads = []
-            for p in people[:max_results]:
-                leads.append({
-                    "full_name": p.get("name", ""),
-                    "job_title": p.get("title", ""),
-                    "company_name": p.get("organization", {}).get("name", company_name),
-                    "company_domain": p.get("organization", {}).get("website_url", company_domain),
-                    "email": p.get("email", ""),
-                    "phone": p.get("phone_numbers", [{}])[0].get("raw_number", "") if p.get("phone_numbers") else "",
-                    "linkedin_url": p.get("linkedin_url", ""),
-                    "photo_url": p.get("photo_url", ""),
-                    "city": p.get("city", ""),
-                    "country": p.get("country", ""),
-                    "company_size": p.get("organization", {}).get("estimated_num_employees", ""),
-                    "company_industry": p.get("organization", {}).get("industry", ""),
+        if resp.status_code == 200:
+            orgs = resp.json().get("organizations", [])
+            for org in orgs[:max_results]:
+                companies.append({
+                    "company_name": org.get("name", ""),
+                    "company_domain": org.get("website_url", ""),
+                    "industry": org.get("industry", ""),
+                    "company_size": org.get("estimated_num_employees", ""),
+                    "city": org.get("city", ""),
+                    "country": org.get("country", ""),
+                    "linkedin_url": org.get("linkedin_url", ""),
+                    "phone": org.get("phone", ""),
+                    "founded_year": org.get("founded_year", ""),
+                    "keywords": org.get("keywords", []),
                 })
 
-            print(f"PROSPECT SEARCH: Apollo -> {len(leads)} leads")
-            return leads
-        else:
-            print(f"PROSPECT SEARCH: Apollo top_people error {people_resp.status_code}")
-            return []
+        print(f"PROSPECT SEARCH: Apollo -> {len(companies)} companies found")
+
+        # Paso 2: Enriquecer la primera empresa si tiene domain
+        if companies and companies[0].get("company_domain"):
+            domain = companies[0]["company_domain"].replace("https://", "").replace("http://", "").strip("/")
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    enrich_resp = await client.get(
+                        "https://api.apollo.io/api/v1/organizations/enrich",
+                        headers={"X-Api-Key": api_key},
+                        params={"domain": domain},
+                    )
+                if enrich_resp.status_code == 200:
+                    enrich_data = enrich_resp.json().get("organization", {})
+                    if enrich_data:
+                        companies[0]["description"] = enrich_data.get("short_description", "")
+                        companies[0]["annual_revenue"] = enrich_data.get("annual_revenue_printed", "")
+                        companies[0]["technologies"] = enrich_data.get("current_technologies", [])[:5]
+                        companies[0]["seo_description"] = enrich_data.get("seo_description", "")
+                        print(f"PROSPECT SEARCH: Apollo enriched {companies[0]['company_name']}")
+            except Exception as e:
+                print(f"PROSPECT SEARCH: Enrich error: {e}")
+
+        return companies
 
     except Exception as e:
         print(f"PROSPECT SEARCH: Apollo error: {e}")
         return []
+
+
+# Alias for backwards compatibility
+search_leads_apollo = search_and_enrich_companies
 
 
 # --- ENRIQUECIMIENTO: Web scraping basico ---

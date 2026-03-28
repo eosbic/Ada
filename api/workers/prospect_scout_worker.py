@@ -59,7 +59,7 @@ async def _get_active_configs() -> list:
 
 async def _run_scan(config: dict):
     """Ejecuta un scan de oportunidades para una configuracion."""
-    from api.services.prospect_search_service import search_market_signals, search_leads_apollo
+    from api.services.prospect_search_service import search_market_signals, search_and_enrich_companies
     from api.services.agent_status_service import update_agent_last_run
 
     empresa_id = str(config["empresa_id"])
@@ -103,13 +103,13 @@ async def _run_scan(config: dict):
             companies = []
 
         for company in companies[:2]:
-            leads = await search_leads_apollo(
+            results = await search_and_enrich_companies(
                 empresa_id=empresa_id,
                 company_name=company.get("name", ""),
                 location=regions[0] if regions else "",
                 max_results=2,
             )
-            leads_found.extend(leads)
+            leads_found.extend(results)
 
     # 3. Actualizar last_scan
     try:
@@ -144,9 +144,11 @@ async def _run_scan(config: dict):
                 notification += f"  🔹 {s['title'][:80]}\n"
 
         if leads_found:
-            notification += f"\n👥 <b>{len(leads_found)} leads encontrados:</b>\n"
+            notification += f"\n🏢 <b>{len(leads_found)} empresas encontradas:</b>\n"
             for l in leads_found[:3]:
-                notification += f"  🔹 {l.get('full_name', 'N/D')} — {l.get('job_title', '')} en {l.get('company_name', '')}\n"
+                size = l.get("company_size", "")
+                size_str = f" ({size} emp.)" if size else ""
+                notification += f"  🔹 {l.get('company_name', 'N/D')} — {l.get('industry', '')}{size_str}\n"
 
         notification += '\n💡 Escribe "perfila [nombre]" para mas detalles.'
 

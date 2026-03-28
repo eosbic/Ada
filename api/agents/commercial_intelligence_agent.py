@@ -160,8 +160,8 @@ async def find_leads(state: CommercialState) -> dict:
 
         return {"leads": [lead] if lead["full_name"] or lead["company_name"] else []}
 
-    # Modo proactivo: buscar en Apollo
-    from api.services.prospect_search_service import search_leads_apollo
+    # Modo proactivo: buscar empresas en Apollo
+    from api.services.prospect_search_service import search_and_enrich_companies
 
     empresa_id = state.get("empresa_id", "")
     dna = state.get("dna", {})
@@ -188,24 +188,25 @@ async def find_leads(state: CommercialState) -> dict:
             companies = []
 
         for company in companies[:3]:
-            leads = await search_leads_apollo(
+            results = await search_and_enrich_companies(
                 empresa_id=empresa_id,
                 company_name=company.get("name", ""),
                 company_domain=company.get("domain", ""),
                 location=dna.get("city", ""),
                 max_results=2,
             )
-            all_leads.extend(leads)
+            all_leads.extend(results)
 
     if not all_leads:
-        leads = await search_leads_apollo(
+        results = await search_and_enrich_companies(
             empresa_id=empresa_id,
+            company_name="",
             location=dna.get("city", "Colombia"),
             max_results=5,
         )
-        all_leads.extend(leads)
+        all_leads.extend(results)
 
-    print(f"COMMERCIAL: Found {len(all_leads)} leads total")
+    print(f"COMMERCIAL: Found {len(all_leads)} leads/companies total")
     return {"leads": all_leads[:5]}
 
 
@@ -321,24 +322,25 @@ SENALES DE MERCADO:
 GENERA DOS COSAS:
 
 1. PERFIL EMPATICO (maximo 8 lineas):
-- Quien es esta persona y su empresa
-- Por que podria necesitar nuestro servicio
+- Si es una PERSONA: quien es, su empresa, por que podria necesitar nuestro servicio
+- Si es una EMPRESA (sin persona especifica): que hace, tamano, industria, por que podria necesitar nuestro servicio
 - Angulo de acercamiento recomendado
 - Punto de dolor probable
 - Nivel de oportunidad (alta/media/baja)
 
-2. BORRADOR DE EMAIL DE ACERCAMIENTO:
+2. BORRADOR DE EMAIL DE ACERCAMIENTO (solo si hay email del prospecto):
 - Personalizado con la senal o contexto detectado
 - Maximo 5 lineas
 - Directo, no generico
 - Firmar como {remitent_name or 'el remitente'}
 - NO usar "Estimado/a"
+- Si no hay email, dejar email_subject y email_body vacios
 
 Responde JSON:
 {{
     "synthesis": "perfil empatico aqui",
-    "email_subject": "asunto del email",
-    "email_body": "cuerpo del email",
+    "email_subject": "asunto del email o vacio",
+    "email_body": "cuerpo del email o vacio",
     "opportunity_level": "alta|media|baja"
 }}"""
 
@@ -361,18 +363,24 @@ Responde JSON:
         email_subject = ""
         email_body = ""
 
-    # Formatear respuesta
-    other_leads = ""
-    if len(leads) > 1:
-        other_leads_list = "\n".join(
-            f"  🔹 {l.get('full_name', 'N/D')} — {l.get('job_title', '')} en {l.get('company_name', '')}"
-            for l in leads[1:4]
-        )
-        other_leads = f"\n\n👥 **Otros leads encontrados:**\n{other_leads_list}"
-
+    # Formatear respuesta — distinguir persona vs empresa
+    has_person = bool(prospect.get("full_name"))
     prospect_email = prospect.get("email", "")
 
-    response = f"""🎯 **Perfil Comercial**
+    other_leads = ""
+    if len(leads) > 1:
+        other_items = []
+        for l in leads[1:4]:
+            if l.get("full_name"):
+                other_items.append(f"  🔹 {l['full_name']} — {l.get('job_title', '')} en {l.get('company_name', '')}")
+            else:
+                size = l.get("company_size", "")
+                size_str = f" ({size} emp.)" if size else ""
+                other_items.append(f"  🔹 {l.get('company_name', 'N/D')} — {l.get('industry', '')}{size_str}")
+        other_leads = f"\n\n🏢 **Otras empresas encontradas:**\n" + "\n".join(other_items)
+
+    if has_person:
+        response = f"""🎯 **Perfil Comercial**
 
 👤 **{prospect.get('full_name', 'N/D')}**
 💼 {prospect.get('job_title', 'N/D')} en {prospect.get('company_name', 'N/D')}
@@ -381,6 +389,31 @@ Responde JSON:
 
 📋 **Analisis:**
 {synthesis}"""
+    else:
+        # Perfil de empresa
+        company = prospect.get("company_name", "N/D")
+        size = prospect.get("company_size", "")
+        size_str = f" ({size} empleados)" if size else ""
+        desc = prospect.get("description") or prospect.get("seo_description") or ""
+        techs = prospect.get("technologies", [])
+        techs_str = ", ".join(str(t) for t in techs[:5]) if techs else ""
+        revenue = prospect.get("annual_revenue", "")
+
+        response = f"""🎯 **Perfil de Empresa**
+
+🏢 **{company}**
+🌐 {prospect.get('company_domain', 'N/D')}
+📍 {prospect.get('city', '')} {prospect.get('country', '')}
+🏭 {prospect.get('industry', 'N/D')}{size_str}"""
+
+        if revenue:
+            response += f"\n💰 Facturacion: {revenue}"
+        if desc:
+            response += f"\n📝 {desc[:200]}"
+        if techs_str:
+            response += f"\n🔧 Tech: {techs_str}"
+
+        response += f"\n\n📋 **Analisis:**\n{synthesis}"
 
     if cross_refs:
         refs_text = "\n".join(f"  🔗 {r.get('type', '')}: {r.get('content', '')[:80]}" for r in cross_refs[:2])
@@ -422,8 +455,11 @@ Responde JSON:
         except Exception as e:
             print(f"COMMERCIAL: Draft error: {e}")
 
-    if not prospect_email:
+    if not prospect_email and has_person:
         response += "\n\n⚠️ No encontre email verificado. ¿Tienes el email de esta persona?"
+    elif not has_person:
+        company = prospect.get("company_name", "esta empresa")
+        response += f"\n\n💡 Escribe \"perfila a [nombre] de {company}\" para obtener el contacto directo."
 
     return {
         "synthesis": synthesis,

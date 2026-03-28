@@ -81,7 +81,7 @@ async def search_leads_apollo(
     location: str = "",
     max_results: int = 5,
 ) -> list:
-    """Busca leads en Apollo.io por empresa, cargo y ubicacion."""
+    """Busca leads en Apollo.io (free tier: org search + top people)."""
     creds = get_service_credentials(empresa_id, "apollo")
     if "error" in creds:
         print("PROSPECT SEARCH: Apollo no configurado")
@@ -91,41 +91,63 @@ async def search_leads_apollo(
     if not api_key:
         return []
 
-    if not titles:
-        titles = ["CEO", "Gerente General", "Director", "Gerente de Operaciones"]
+    headers = {"Content-Type": "application/json", "X-Api-Key": api_key}
 
     try:
-        payload = {
-            "api_key": api_key,
-            "page": 1,
-            "per_page": max_results,
-        }
-
-        if company_name:
-            payload["q_organization_name"] = company_name
-        if company_domain:
-            payload["q_organization_domains"] = company_domain
-        if titles:
-            payload["person_titles"] = titles
-        if location:
-            payload["person_locations"] = [location]
-
+        # Paso 1: Buscar organizacion
+        org_id = ""
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                "https://api.apollo.io/v1/mixed_people/search",
-                headers={"Content-Type": "application/json"},
-                json=payload,
+            org_resp = await client.post(
+                "https://api.apollo.io/api/v1/organizations/search",
+                headers=headers,
+                json={
+                    "q_organization_name": company_name or location,
+                    "page": 1,
+                    "per_page": 1,
+                },
+            )
+            if org_resp.status_code == 200:
+                orgs = org_resp.json().get("organizations", [])
+                if orgs:
+                    org_id = orgs[0].get("id", "")
+
+        if not org_id and company_domain:
+            # Intentar con enrichment si tiene domain
+            async with httpx.AsyncClient(timeout=20) as client:
+                enrich_resp = await client.get(
+                    "https://api.apollo.io/api/v1/organizations/enrich",
+                    headers={"X-Api-Key": api_key},
+                    params={"domain": company_domain},
+                )
+                if enrich_resp.status_code == 200:
+                    org_data = enrich_resp.json().get("organization", {})
+                    org_id = org_data.get("id", "")
+
+        if not org_id:
+            print(f"PROSPECT SEARCH: Apollo - org not found for {company_name}")
+            return []
+
+        # Paso 2: Buscar top people de la organizacion
+        async with httpx.AsyncClient(timeout=20) as client:
+            people_resp = await client.post(
+                "https://api.apollo.io/api/v1/mixed_people/organization_top_people",
+                headers=headers,
+                json={
+                    "organization_id": org_id,
+                    "page": 1,
+                    "per_page": max_results,
+                },
             )
 
-        if resp.status_code == 200:
-            people = resp.json().get("people", [])
+        if people_resp.status_code == 200:
+            people = people_resp.json().get("people", [])
             leads = []
             for p in people[:max_results]:
                 leads.append({
                     "full_name": p.get("name", ""),
                     "job_title": p.get("title", ""),
-                    "company_name": p.get("organization", {}).get("name", ""),
-                    "company_domain": p.get("organization", {}).get("website_url", ""),
+                    "company_name": p.get("organization", {}).get("name", company_name),
+                    "company_domain": p.get("organization", {}).get("website_url", company_domain),
                     "email": p.get("email", ""),
                     "phone": p.get("phone_numbers", [{}])[0].get("raw_number", "") if p.get("phone_numbers") else "",
                     "linkedin_url": p.get("linkedin_url", ""),
@@ -139,7 +161,7 @@ async def search_leads_apollo(
             print(f"PROSPECT SEARCH: Apollo -> {len(leads)} leads")
             return leads
         else:
-            print(f"PROSPECT SEARCH: Apollo error {resp.status_code}")
+            print(f"PROSPECT SEARCH: Apollo top_people error {people_resp.status_code}")
             return []
 
     except Exception as e:

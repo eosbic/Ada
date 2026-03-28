@@ -255,6 +255,23 @@ async def synthesize_and_draft(state: CommercialState) -> dict:
     user_id = state.get("user_id", "")
 
     if not prospect and not leads:
+        # Si hay senales pero no leads, mostrar las senales al usuario
+        if signals:
+            signals_text = "\n".join(
+                f"  🔹 {s['title'][:100]}\n     {s['url']}"
+                for s in signals[:5]
+            )
+            return {
+                "response": (
+                    f"📰 **Senales de mercado encontradas ({len(signals)}):**\n\n"
+                    f"{signals_text}\n\n"
+                    f"⚠️ No pude obtener contactos directos de estas empresas.\n"
+                    f"¿Tienes el nombre de alguien en alguna de estas empresas? "
+                    f"Escribe \"perfila [nombre] de [empresa]\" y te armo el perfil."
+                ),
+                "model_used": "none",
+                "sources_used": [],
+            }
         return {
             "response": "No encontre prospectos relevantes. Intenta con otro sector o empresa.",
             "model_used": "none",

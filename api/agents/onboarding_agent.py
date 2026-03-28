@@ -15,7 +15,6 @@ El estado se mantiene en memoria (dict por empresa_id).
 import json
 import os
 import re
-import urllib.parse
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,28 +58,13 @@ async def process_onboarding(
     """Procesa un paso del onboarding. Retorna pregunta actual."""
 
     def _build_oauth_message(suite, eid, uid, ada_name, company_name, prefix=""):
-        """Genera el mensaje de conexión OAuth sin depender de fall-through."""
+        """Genera el mensaje de conexión OAuth con URL corta (sin underscores para Telegram)."""
         if suite == "google":
-            client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-            redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "https://backend-ada.duckdns.org/oauth/callback")
-            scopes = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/contacts.readonly"
-            state_str = f"{eid}|google|{uid}"
-            if client_id:
-                oauth_url = (
-                    f"https://accounts.google.com/o/oauth2/v2/auth?"
-                    f"client_id={client_id}&"
-                    f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
-                    f"response_type=code&"
-                    f"scope={urllib.parse.quote(scopes)}&"
-                    f"access_type=offline&prompt=consent&"
-                    f"state={urllib.parse.quote(state_str)}"
-                )
-            else:
-                oauth_url = f"https://backend-ada.duckdns.org/oauth/connect/google/{eid}?user_id={uid}"
+            oauth_url = f"https://backend-ada.duckdns.org/oauth/go/google/{eid}/{uid}"
             provider_name = "Google Workspace"
             details = "Gmail, Calendar, Contactos y Drive"
         elif suite in ("microsoft", "microsoft365", "outlook"):
-            oauth_url = f"https://backend-ada.duckdns.org/oauth/microsoft/connect/microsoft365/{eid}?user_id={uid}"
+            oauth_url = f"https://backend-ada.duckdns.org/oauth/go/microsoft/{eid}/{uid}"
             provider_name = "Microsoft 365"
             details = "Outlook, Calendar, Contactos y OneDrive"
         else:
@@ -116,6 +100,27 @@ async def process_onboarding(
                 f"¿En qué te ayudo primero?"
             ),
             "completed": True,
+        }
+
+    def _transition_to_pm(session, eid, company_data, ada_name, company_name, prefix=""):
+        """Transiciona a connect_pm o complete. Retorna directamente sin fall-through."""
+        pm_tool = company_data.get("pm_tool", "")
+        if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
+            _onboarding_sessions.pop(eid, None)
+            return _build_complete_message(ada_name, company_name)
+
+        session["step"] = "connect_pm"
+        _onboarding_sessions[eid] = session
+        pm_instructions = {
+            "notion": "📋 **Paso 3 — Conectar Notion:**\n\n1. Ve a https://www.notion.so/my-integrations\n2. Click en **New integration** → Nombre: \"Ada\"\n3. Copia el **Internal Integration Token**\n4. Pégalo aquí\n\nSi prefieres después, escribe **saltar**.",
+            "plane": "📋 **Paso 3 — Conectar Plane:**\n\n1. Ve a Plane → Perfil → Settings → API Tokens\n2. Genera un nuevo token\n3. Pégalo aquí\n\nSi prefieres después, escribe **saltar**.",
+            "asana": "📋 **Paso 3 — Conectar Asana:**\n\n1. Ve a https://app.asana.com/0/developer-console\n2. Personal Access Tokens → New Access Token → \"Ada\"\n3. Pégalo aquí\n\nSi prefieres después, escribe **saltar**.",
+        }
+        msg = pm_instructions.get(pm_tool, f"La conexión con {pm_tool} se configura desde el portal.\nEscribe **saltar** para continuar.")
+        return {
+            "step": "connect_pm",
+            "message": f"{prefix}{msg}",
+            "completed": False,
         }
 
     session = _onboarding_sessions.get(empresa_id, {
@@ -961,20 +966,16 @@ async def process_onboarding(
             session["step"] = "connect_oauth"
             _onboarding_sessions[empresa_id] = session
             suite = company_data.get("productivity_suite", "google")
+            company_name = company_data.get("company_name", "tu empresa")
             prefix = (
-                f"✅ ¡{ada_name} está configurada para {company_data.get('company_name', 'tu empresa')}!\n\n"
+                f"✅ ¡{ada_name} está configurada para {company_name}!\n\n"
                 f"🔄 Estoy analizando tu sitio web y competidores en segundo plano.\n\n"
             )
-            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_data.get("company_name", ""), prefix)
+            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_name, prefix)
             if oauth_msg:
                 return oauth_msg
-            # No suite → skip to PM
-            session["step"] = "connect_pm"
-            _onboarding_sessions[empresa_id] = session
-            pm_tool = company_data.get("pm_tool", "")
-            if not pm_tool or pm_tool in ("none", "ninguno"):
-                _onboarding_sessions.pop(empresa_id, None)
-                return _build_complete_message(ada_name, company_data.get("company_name", "tu empresa"))
+            # No suite → skip to PM directly
+            return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name)
         else:
             return {
                 "step": "connect_telegram",
@@ -998,16 +999,12 @@ async def process_onboarding(
             _onboarding_sessions[empresa_id] = session
             suite = company_data.get("productivity_suite", "google")
             ada_name = company_data.get("ada_name", "Ada")
-            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_data.get("company_name", ""))
+            company_name = company_data.get("company_name", "tu empresa")
+            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_name)
             if oauth_msg:
                 return oauth_msg
-            # No suite → skip to PM
-            session["step"] = "connect_pm"
-            _onboarding_sessions[empresa_id] = session
-            pm_tool = company_data.get("pm_tool", "")
-            if not pm_tool or pm_tool in ("none", "ninguno"):
-                _onboarding_sessions.pop(empresa_id, None)
-                return _build_complete_message(ada_name, company_data.get("company_name", "tu empresa"))
+            # No suite → skip to PM directly
+            return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name)
         else:
             return {
                 "step": "connect_telegram",
@@ -1037,19 +1034,10 @@ async def process_onboarding(
             pass
 
         if already_connected:
-            session["step"] = "connect_pm"
-            _onboarding_sessions[empresa_id] = session
             ada_name = company_data.get("ada_name", "Ada")
             company_name = company_data.get("company_name", "tu empresa")
-            pm_tool = company_data.get("pm_tool", "")
-            if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
-                _onboarding_sessions.pop(empresa_id, None)
-                return _build_complete_message(ada_name, company_name)
-            return {
-                "step": "connect_pm",
-                "message": f"✅ {suite.title()} ya estaba conectado.\n\n",
-                "completed": False,
-            }
+            return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name,
+                                     prefix=f"✅ {suite.title()} ya estaba conectado.\n\n")
         elif response_lower in ("listo", "ya", "done", "ok", "siguiente", "conectado"):
             # Re-verificar
             try:
@@ -1066,13 +1054,10 @@ async def process_onboarding(
                 now_connected = False
 
             if now_connected:
-                session["step"] = "connect_pm"
-                _onboarding_sessions[empresa_id] = session
-                return {
-                    "step": "connect_pm",
-                    "message": f"✅ {suite.title()} conectado exitosamente.\n\n",
-                    "completed": False,
-                }
+                ada_name = company_data.get("ada_name", "Ada")
+                company_name = company_data.get("company_name", "tu empresa")
+                return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name,
+                                         prefix=f"✅ {suite.title()} conectado exitosamente.\n\n")
             else:
                 return {
                     "step": "connect_oauth",
@@ -1080,80 +1065,19 @@ async def process_onboarding(
                     "completed": False,
                 }
         elif response_lower in ("saltar", "skip", "después", "despues"):
-            session["step"] = "connect_pm"
-            _onboarding_sessions[empresa_id] = session
             ada_name = company_data.get("ada_name", "Ada")
             company_name = company_data.get("company_name", "tu empresa")
-            pm_tool = company_data.get("pm_tool", "")
-            if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
-                _onboarding_sessions.pop(empresa_id, None)
-                return _build_complete_message(ada_name, company_name)
-            # Has PM tool — show PM instructions on next message
-            return {
-                "step": "connect_pm",
-                "message": f"OK, puedes conectar {suite.title()} después.\n\n",
-                "completed": False,
-            }
+            return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name,
+                                     prefix=f"OK, puedes conectar {suite.title()} después.\n\n")
         else:
-            # Primera vez — mostrar link
-            if suite == "google":
-                client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-                redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "https://backend-ada.duckdns.org/oauth/callback")
-                scopes = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/contacts.readonly"
-                state = f"{empresa_id}|google|{user_id}"
-
-                if client_id:
-                    oauth_url = (
-                        f"https://accounts.google.com/o/oauth2/v2/auth?"
-                        f"client_id={client_id}&"
-                        f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
-                        f"response_type=code&"
-                        f"scope={urllib.parse.quote(scopes)}&"
-                        f"access_type=offline&prompt=consent&"
-                        f"state={urllib.parse.quote(state)}"
-                    )
-                else:
-                    oauth_url = f"https://backend-ada.duckdns.org/oauth/connect/google/{empresa_id}?user_id={user_id}"
-
-                return {
-                    "step": "connect_oauth",
-                    "message": (
-                        f"📧 **Paso 2 — Conectar Google Workspace:**\n\n"
-                        f"Necesito acceso a tu Gmail, Calendar, Contactos y Drive.\n\n"
-                        f"👉 Haz click en este enlace para autorizar:\n{oauth_url}\n\n"
-                        f"Cuando termine, escribe **listo**.\n"
-                        f"Si prefieres después, escribe **saltar**."
-                    ),
-                    "completed": False,
-                }
-
-            elif suite in ("microsoft", "microsoft365", "outlook"):
-                oauth_url = f"https://backend-ada.duckdns.org/oauth/microsoft/connect/microsoft365/{empresa_id}?user_id={user_id}"
-                return {
-                    "step": "connect_oauth",
-                    "message": (
-                        f"📧 **Paso 2 — Conectar Microsoft 365:**\n\n"
-                        f"Necesito acceso a tu Outlook, Calendar, Contactos y OneDrive.\n\n"
-                        f"👉 Haz click en este enlace para autorizar:\n{oauth_url}\n\n"
-                        f"Cuando termine, escribe **listo**.\n"
-                        f"Si prefieres después, escribe **saltar**."
-                    ),
-                    "completed": False,
-                }
-            else:
-                session["step"] = "connect_pm"
-                _onboarding_sessions[empresa_id] = session
-                ada_name = company_data.get("ada_name", "Ada")
-                company_name = company_data.get("company_name", "tu empresa")
-                pm_tool = company_data.get("pm_tool", "")
-                if not pm_tool or pm_tool in ("none", "ninguno", "otro"):
-                    _onboarding_sessions.pop(empresa_id, None)
-                    return _build_complete_message(ada_name, company_name)
-                return {
-                    "step": "connect_pm",
-                    "message": "",
-                    "completed": False,
-                }
+            # Primera vez — mostrar link usando URL corta
+            ada_name = company_data.get("ada_name", "Ada")
+            company_name = company_data.get("company_name", "tu empresa")
+            oauth_msg = _build_oauth_message(suite, empresa_id, user_id, ada_name, company_name)
+            if oauth_msg:
+                return oauth_msg
+            # Suite desconocida → ir a PM directamente
+            return _transition_to_pm(session, empresa_id, company_data, ada_name, company_name)
 
     # ─── CONNECT PM ──────────────────────────────────
     if step == "connect_pm":

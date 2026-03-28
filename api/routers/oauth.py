@@ -305,6 +305,51 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
     }
 
 
+@router.get("/go/google/{empresa_id}/{user_id}")
+async def go_google_oauth(empresa_id: str, user_id: str):
+    """Redirect directo a Google OAuth — URL corta para Telegram sin underscores."""
+    from starlette.responses import RedirectResponse
+    import urllib.parse
+
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", f"{API_BASE_URL}/oauth/callback")
+    scopes = " ".join(SCOPES)
+    state = f"{empresa_id}|google|{user_id}"
+
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={client_id}&"
+        f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
+        f"response_type=code&"
+        f"scope={urllib.parse.quote(scopes)}&"
+        f"access_type=offline&prompt=consent&"
+        f"state={urllib.parse.quote(state)}"
+    )
+    return RedirectResponse(url=auth_url)
+
+
+@router.get("/go/microsoft/{empresa_id}/{user_id}")
+async def go_microsoft_oauth(empresa_id: str, user_id: str):
+    """Redirect directo a Microsoft OAuth — URL corta para Telegram sin underscores."""
+    from starlette.responses import RedirectResponse
+    import urllib.parse
+
+    client_id = MICROSOFT_CLIENT_ID or ""
+    redirect_uri = os.getenv("M365_REDIRECT_URI", f"{API_BASE_URL}/oauth/microsoft/callback")
+    scopes = " ".join(M365_SCOPES)
+    state = f"{empresa_id}|microsoft365|{user_id}"
+
+    auth_url = (
+        f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize?"
+        f"client_id={client_id}&"
+        f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
+        f"response_type=code&"
+        f"scope={urllib.parse.quote(scopes)}&"
+        f"state={urllib.parse.quote(state)}"
+    )
+    return RedirectResponse(url=auth_url)
+
+
 @router.get("/status/{empresa_id}")
 async def check_connection_status(empresa_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(

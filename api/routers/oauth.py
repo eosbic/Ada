@@ -36,6 +36,9 @@ M365_SCOPES = [
     "Mail.Send",
     "Files.Read.All",
     "Contacts.Read",
+    # Teams transcripts + online meetings
+    "OnlineMeetings.Read",
+    "OnlineMeetingTranscript.Read.All",
 ]
 
 SCOPES = [
@@ -44,6 +47,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/contacts.readonly",
+    # Meet REST API — transcripts y participantes
+    "https://www.googleapis.com/auth/meetings.space.readonly",
 ]
 
 
@@ -165,6 +170,14 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
         clear_cache(empresa_id)
     except Exception:
         pass
+
+    # Crear suscripcion a eventos de Google Meet (no bloqueante)
+    try:
+        import asyncio
+        from api.services.meet_subscription_service import subscribe_google_meet_events
+        asyncio.create_task(subscribe_google_meet_events(empresa_id, user_id))
+    except Exception as e:
+        print(f"OAUTH: Error creating Meet subscription: {e}")
 
     return {
         "status": "connected",
@@ -295,6 +308,14 @@ async def microsoft_oauth_callback(code: str, state: str, db: AsyncSession = Dep
         clear_cache(empresa_id)
     except Exception:
         pass
+
+    # Crear suscripcion a eventos de Teams transcripts (no bloqueante)
+    try:
+        import asyncio
+        from api.services.meet_subscription_service import subscribe_teams_transcript_events
+        asyncio.create_task(subscribe_teams_transcript_events(empresa_id, user_id))
+    except Exception as e:
+        print(f"OAUTH: Error creating Teams subscription: {e}")
 
     return {
         "status": "connected",

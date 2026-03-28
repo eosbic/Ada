@@ -16,6 +16,7 @@ from . import admin_auth
 from . import admin_router
 from . import portal_router
 from . import admin_portal_router
+from . import webhooks
 
 
 api_router = APIRouter()
@@ -126,4 +127,10 @@ api_router.include_router(
 api_router.include_router(
     admin_portal_router.router,
     tags=["Admin Portal"]
+)
+
+api_router.include_router(
+    webhooks.router,
+    prefix="/webhooks",
+    tags=["Webhooks"]
 )

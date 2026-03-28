@@ -110,6 +110,39 @@ def get_google_credentials(empresa_id: str, service: str = "gmail", user_id: str
         print(f"ERROR credentials {service}/{empresa_id}: {e}")
         return {"error": f"Error obteniendo credenciales: {str(e)}"}
 
+
+def get_raw_google_credentials(empresa_id: str, user_id: str = ""):
+    """Retorna google.oauth2.credentials.Credentials para usar con googleapiclient.
+
+    Diferente de get_google_credentials que retorna un dict.
+    Esta función retorna el objeto Credentials completo con refresh automático.
+    """
+    try:
+        from google.oauth2.credentials import Credentials
+
+        creds_data = get_google_credentials(empresa_id, "gmail", user_id=user_id)
+        if "error" in creds_data:
+            return None
+
+        creds = Credentials(
+            token=creds_data.get("access_token", ""),
+            refresh_token=creds_data.get("refresh_token", ""),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=creds_data.get("client_id", os.getenv("GOOGLE_CLIENT_ID", "")),
+            client_secret=creds_data.get("client_secret", os.getenv("GOOGLE_CLIENT_SECRET", "")),
+        )
+
+        if creds.expired and creds.refresh_token:
+            import google.auth.transport.requests
+            creds.refresh(google.auth.transport.requests.Request())
+
+        return creds
+
+    except Exception as e:
+        print(f"CREDENTIALS: Error getting raw Google creds: {e}")
+        return None
+
+
 def _refresh_token(empresa_id, service, creds, refresh_token, fernet, user_id: str = "") -> dict:
     """Refresh automático de OAuth2 token."""
     import requests

@@ -134,6 +134,20 @@ async def execute_calendar_action(state: CalendarState) -> dict:
     empresa_id = state.get("empresa_id", "")
     user_id = state.get("user_id", "")
 
+    # Normalizar acciones alternativas del LLM
+    action_aliases = {
+        "get_events": "list",
+        "get": "list",
+        "find": "search",
+        "lookup": "search",
+        "remove": "delete",
+        "cancel": "delete",
+        "reschedule": "update",
+        "check": "availability",
+        "free_slots": "availability",
+    }
+    action = action_aliases.get(action, action)
+
     if action == "list":
         days = int(params.get("days_ahead", 7))
         events = calendar_list_events(days_ahead=days, empresa_id=empresa_id, user_id=user_id)

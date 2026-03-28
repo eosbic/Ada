@@ -228,6 +228,79 @@ def gmail_reply(message_id: str, body: str, empresa_id: str = "", user_id: str =
         return {"error": str(e)}
 
 
+# ─── Gmail Attachments ─────────────────────────────────────
+
+def gmail_get_attachments(message_id: str, empresa_id: str = "", user_id: str = "") -> list:
+    """Descarga attachments de un email. Retorna lista de {filename, content, mime_type}."""
+    try:
+        service = _get_gmail_service(empresa_id, user_id=user_id)
+        msg = service.users().messages().get(
+            userId="me", id=message_id, format="full"
+        ).execute()
+
+        attachments = []
+        payload = msg.get("payload", {})
+        parts = payload.get("parts", [])
+
+        for part in parts:
+            filename = part.get("filename", "")
+            if not filename:
+                # Revisar sub-parts (multipart)
+                sub_parts = part.get("parts", [])
+                for sub in sub_parts:
+                    sub_filename = sub.get("filename", "")
+                    if sub_filename:
+                        att_data = _download_attachment(service, message_id, sub)
+                        if att_data:
+                            attachments.append({
+                                "filename": sub_filename,
+                                "content": att_data,
+                                "mime_type": sub.get("mimeType", ""),
+                            })
+            else:
+                att_data = _download_attachment(service, message_id, part)
+                if att_data:
+                    attachments.append({
+                        "filename": filename,
+                        "content": att_data,
+                        "mime_type": part.get("mimeType", ""),
+                    })
+
+        print(f"GMAIL: {len(attachments)} attachments encontrados en {message_id}")
+        return attachments
+
+    except Exception as e:
+        print(f"ERROR Gmail attachments: {e}")
+        return []
+
+
+def _download_attachment(service, message_id: str, part: dict) -> str:
+    """Descarga un attachment específico y retorna el contenido como texto."""
+    try:
+        body = part.get("body", {})
+        att_id = body.get("attachmentId", "")
+
+        if att_id:
+            att = service.users().messages().attachments().get(
+                userId="me", messageId=message_id, id=att_id
+            ).execute()
+            data = att.get("data", "")
+        else:
+            data = body.get("data", "")
+
+        if data:
+            decoded = base64.urlsafe_b64decode(data)
+            try:
+                return decoded.decode("utf-8", errors="replace")
+            except Exception:
+                return decoded.decode("latin-1", errors="replace")
+
+        return ""
+    except Exception as e:
+        print(f"GMAIL: Error descargando attachment: {e}")
+        return ""
+
+
 # ─── Microsoft 365 Sync Wrappers ────────────────────────────
 
 def _m365_email_search(empresa_id: str, query: str, max_results: int = 10, user_id: str = "") -> list:

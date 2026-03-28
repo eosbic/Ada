@@ -197,6 +197,12 @@ async def email_monitor_worker_loop():
                             )
                             await _send_telegram(telegram_id, notification)
 
+            # Revisar transcripts de Google Meet
+            try:
+                await _check_google_meet_transcripts()
+            except Exception as e:
+                print(f"EMAIL MONITOR: Error checking Meet transcripts: {e}")
+
         except asyncio.CancelledError:
             print("EMAIL MONITOR: Worker cancelado")
             break
@@ -204,3 +210,194 @@ async def email_monitor_worker_loop():
             print(f"EMAIL MONITOR: Error en loop: {e}")
 
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+
+
+# ─── Google Meet Transcript Detection ─────────────────────
+
+async def _check_google_meet_transcripts():
+    """Busca emails de Google Meet con transcripciones nuevas."""
+    try:
+        from api.database import sync_engine
+        from sqlalchemy import text as sql_text
+
+        # Obtener todas las empresas con Gmail activo
+        with sync_engine.connect() as conn:
+            empresas = conn.execute(
+                sql_text("""
+                    SELECT DISTINCT tc.empresa_id, tc.user_id
+                    FROM tenant_credentials tc
+                    WHERE tc.provider = 'gmail' AND tc.is_active = TRUE
+                """)
+            ).fetchall()
+
+        for emp in empresas:
+            empresa_id = str(emp.empresa_id)
+            user_id = str(emp.user_id) if emp.user_id else ""
+
+            try:
+                from api.services.gmail_service import gmail_search, gmail_get_attachments
+
+                # Buscar emails de Google Meet de los últimos 3 días
+                results = gmail_search(
+                    query="from:meetings-noreply@google.com newer_than:3d",
+                    max_results=5,
+                    empresa_id=empresa_id,
+                    user_id=user_id,
+                )
+
+                if not isinstance(results, list) or not results:
+                    continue
+
+                for email in results:
+                    msg_id = email.get("id", "")
+                    if not msg_id:
+                        continue
+
+                    # Verificar si ya procesamos este email
+                    with sync_engine.connect() as conn:
+                        existing = conn.execute(
+                            sql_text("""
+                                SELECT id FROM meeting_events
+                                WHERE gmail_message_id = :msg_id
+                                LIMIT 1
+                            """),
+                            {"msg_id": msg_id}
+                        ).fetchone()
+
+                    if existing:
+                        continue  # Ya procesado
+
+                    print(f"MEETING MONITOR: Nuevo transcript detectado — msg_id={msg_id}")
+
+                    # Descargar attachments
+                    attachments = gmail_get_attachments(msg_id, empresa_id=empresa_id, user_id=user_id)
+
+                    transcript_text = ""
+                    for att in attachments:
+                        filename = att.get("filename", "").lower()
+                        if filename.endswith(".txt") and "transcript" in filename:
+                            transcript_text = att.get("content", "")
+                            break
+
+                    # Si no hay attachment con "transcript", buscar cualquier .txt
+                    if not transcript_text:
+                        for att in attachments:
+                            if att.get("filename", "").lower().endswith(".txt"):
+                                transcript_text = att.get("content", "")
+                                break
+
+                    # Si todavía no hay transcript, intentar leer del body del email
+                    if not transcript_text:
+                        from api.services.gmail_service import gmail_read
+                        full_email = gmail_read(msg_id, empresa_id=empresa_id, user_id=user_id)
+                        body = full_email.get("body", "")
+                        if "Transcripción" in body or "[" in body:
+                            transcript_text = body
+
+                    if not transcript_text or len(transcript_text) < 50:
+                        print(f"MEETING MONITOR: No transcript found in email {msg_id}")
+                        continue
+
+                    # Procesar el transcript
+                    await _process_meeting_transcript(
+                        empresa_id=empresa_id,
+                        user_id=user_id,
+                        gmail_message_id=msg_id,
+                        transcript_text=transcript_text,
+                        email_subject=email.get("subject", "Reunión"),
+                    )
+
+            except Exception as e:
+                print(f"MEETING MONITOR: Error processing empresa {empresa_id[:8]}: {e}")
+
+    except Exception as e:
+        print(f"MEETING MONITOR: Error general: {e}")
+
+
+async def _process_meeting_transcript(
+    empresa_id: str,
+    user_id: str,
+    gmail_message_id: str,
+    transcript_text: str,
+    email_subject: str,
+):
+    """Procesa un transcript de Google Meet completo."""
+    from api.services.meeting_intelligence_service import (
+        parse_transcript,
+        analyze_transcript,
+        map_speakers_to_users,
+        save_meeting_event,
+        save_meeting_report,
+        format_meeting_summary,
+    )
+
+    print(f"MEETING MONITOR: Procesando transcript ({len(transcript_text)} chars)")
+
+    # 1. Parsear transcript
+    parsed = parse_transcript(transcript_text)
+
+    if parsed["line_count"] < 3:
+        print(f"MEETING MONITOR: Transcript muy corto ({parsed['line_count']} líneas), ignorando")
+        return
+
+    # 2. Extraer título del subject del email
+    event_title = email_subject
+    if "Registros de la reunión" in event_title:
+        event_title = f"Reunión {parsed.get('start_time', '')}"
+
+    # 3. Analizar con LLM (Gemini Flash = gratis)
+    analysis = await analyze_transcript(
+        transcript=parsed["transcript"],
+        attendees=parsed["attendees"],
+        event_title=event_title,
+        empresa_id=empresa_id,
+    )
+
+    # 4. Mapear speakers a usuarios reales
+    map_speakers_to_users(parsed["speakers"], empresa_id)
+
+    # 5. Guardar en meeting_events
+    save_meeting_event(
+        empresa_id=empresa_id,
+        user_id=user_id,
+        event_title=event_title,
+        event_date=parsed.get("start_time", ""),
+        participants=parsed["attendees"],
+        transcript=parsed["transcript"],
+        speakers=parsed["speakers"],
+        analysis=analysis,
+        gmail_message_id=gmail_message_id,
+    )
+
+    # 6. Guardar en ada_reports
+    save_meeting_report(empresa_id, event_title, analysis, parsed["attendees"])
+
+    # 7. Notificar al usuario por Telegram
+    telegram_id = ""
+    user_name = ""
+    try:
+        from api.database import sync_engine
+        from sqlalchemy import text as sql_text
+        with sync_engine.connect() as conn:
+            row = conn.execute(
+                sql_text("SELECT nombre, telegram_id FROM usuarios WHERE id = :uid"),
+                {"uid": user_id}
+            ).fetchone()
+            if row:
+                telegram_id = row.telegram_id or ""
+                user_name = row.nombre or ""
+    except Exception:
+        pass
+
+    if telegram_id:
+        summary_text = format_meeting_summary(event_title, analysis, parsed["attendees"])
+
+        # Agregar acciones sugeridas
+        tasks = analysis.get("tasks", [])
+        if tasks:
+            summary_text += f"\n\n💡 ¿Quieres que cree estas {len(tasks)} tareas en tu herramienta de proyectos?"
+
+        await _send_telegram(telegram_id, summary_text)
+        print(f"MEETING MONITOR: Resumen enviado a {user_name} por Telegram")
+
+    print(f"MEETING MONITOR: Reunión procesada — {len(analysis.get('tasks', []))} tareas, {len(analysis.get('decisions', []))} decisiones")

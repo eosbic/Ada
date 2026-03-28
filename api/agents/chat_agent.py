@@ -685,6 +685,81 @@ async def generate_response(state: ChatState) -> dict:
                 "sources_used": [],
             }
 
+    # Intent: meeting_summary — mostrar última reunión procesada
+    if state.get("intent") == "meeting_summary":
+        try:
+            with sync_engine.connect() as conn:
+                row = conn.execute(
+                    sql_text("""
+                        SELECT event_title, event_date, participants, summary, tasks, decisions, risks, next_meeting
+                        FROM meeting_events
+                        WHERE empresa_id = :eid
+                        ORDER BY created_at DESC LIMIT 1
+                    """),
+                    {"eid": empresa_id}
+                ).fetchone()
+
+            if row:
+                from api.services.meeting_intelligence_service import format_meeting_summary
+                analysis = {
+                    "summary": row.summary,
+                    "tasks": json.loads(row.tasks) if isinstance(row.tasks, str) else (row.tasks or []),
+                    "decisions": json.loads(row.decisions) if isinstance(row.decisions, str) else (row.decisions or []),
+                    "risks": json.loads(row.risks) if isinstance(row.risks, str) else (row.risks or []),
+                    "next_meeting": row.next_meeting or "",
+                }
+                participants = json.loads(row.participants) if isinstance(row.participants, str) else (row.participants or [])
+                response = format_meeting_summary(row.event_title, analysis, participants)
+                return {"response": response, "model_used": "meeting_intel", "sources_used": []}
+            else:
+                return {
+                    "response": "No tengo reuniones procesadas aún. Cuando termines una reunión en Google Meet, el transcript llegará a tu email y lo proceso automáticamente.",
+                    "model_used": "meeting_intel",
+                    "sources_used": [],
+                }
+        except Exception as e:
+            print(f"CHAT: Error loading meeting summary: {e}")
+
+    # Intent: meeting_process — procesar transcripción pegada manualmente
+    if state.get("intent") == "meeting_process":
+        try:
+            from api.services.meeting_intelligence_service import (
+                parse_transcript, analyze_transcript, save_meeting_event,
+                save_meeting_report, format_meeting_summary,
+            )
+
+            parsed = parse_transcript(message)
+            if parsed["line_count"] < 3:
+                return {
+                    "response": "No pude detectar una transcripción válida. Pega el texto completo de la transcripción o sube el archivo .txt.",
+                    "model_used": "meeting_intel",
+                    "sources_used": [],
+                }
+
+            analysis = await analyze_transcript(
+                transcript=parsed["transcript"],
+                attendees=parsed["attendees"],
+                event_title="Reunión procesada manualmente",
+                empresa_id=empresa_id,
+            )
+
+            save_meeting_event(
+                empresa_id=empresa_id, user_id=user_id,
+                event_title="Reunión procesada manualmente",
+                event_date=parsed.get("start_time", ""),
+                participants=parsed["attendees"],
+                transcript=parsed["transcript"],
+                speakers=parsed["speakers"],
+                analysis=analysis,
+            )
+
+            save_meeting_report(empresa_id, "Reunión procesada manualmente", analysis, parsed["attendees"])
+
+            response = format_meeting_summary("Reunión procesada", analysis, parsed["attendees"])
+            return {"response": response, "model_used": "meeting_intel", "sources_used": []}
+        except Exception as e:
+            print(f"CHAT: Error processing meeting transcript: {e}")
+
     # Intent: onboarding
     if state.get("intent") == "onboarding":
         try:

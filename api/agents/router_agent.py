@@ -94,6 +94,8 @@ INTENT_AGENT_MAP = {
     "explicit_memory": "chat_agent",
     "cross_agent": "cross_agent",
     "follow_up": "chat_agent",
+    "meeting_summary": "chat_agent",
+    "meeting_process": "chat_agent",
 }
 
 
@@ -199,6 +201,26 @@ async def classify_intent(state: RouterState) -> dict:
     if any(msg_lower.startswith(p) for p in urgent_patterns):
         print(f"ROUTER: cross_agent detected (internal message)")
         return {"intent": "cross_agent", "confidence": 1.0, "routed_to": "cross_agent"}
+
+    # WHITELIST: meeting summary / resumen de reunión
+    meeting_triggers = [
+        "resumen de la reunión", "resumen de la reunion", "resume la reunión", "resume la reunion",
+        "qué se habló en la reunión", "que se hablo en la reunion", "qué se decidió", "que se decidio",
+        "tareas de la reunión", "tareas de la reunion", "acta de la reunión", "acta de la reunion",
+        "minuta de la reunión", "minuta de la reunion",
+    ]
+    if any(trigger in msg_lower for trigger in meeting_triggers):
+        print(f"ROUTER: meeting_summary detected")
+        return {"intent": "meeting_summary", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # WHITELIST: meeting process / procesar transcripción
+    meeting_process_triggers = [
+        "procesa esta reunión", "procesa esta reunion", "procesa la transcripción", "procesa la transcripcion",
+        "aquí está la transcripción", "aqui esta la transcripcion", "resumen de esta reunión",
+    ]
+    if any(trigger in msg_lower for trigger in meeting_process_triggers):
+        print(f"ROUTER: meeting_process detected")
+        return {"intent": "meeting_process", "confidence": 1.0, "routed_to": "chat_agent"}
 
     # WHITELIST: configurar follow-up de email
     follow_up_triggers = [

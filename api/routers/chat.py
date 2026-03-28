@@ -314,62 +314,107 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                 "intent": "action",
                 "model_used": "hitl",
             }
-        elif pending.get("type") == "email_send" and _looks_like_edit(message, pending):
-            # El usuario editó el borrador — aprender de las diferencias
-            original = pending.get("original_draft", "")
-            if original:
+        elif pending.get("type") == "email_send":
+            # El usuario quiere modificar el borrador (corrección o edición directa)
+            original_draft = pending.get("original_draft", "")
+
+            # Usar LLM para interpretar la corrección y aplicarla al borrador
+            to = pending.get("to", "")
+            subject = ""
+            body = message  # fallback
+
+            if original_draft:
+                try:
+                    from models.selector import selector
+                    _model, _ = selector.get_model("routing")
+
+                    correction_prompt = f"""Tienes un borrador de email y una instrucción del usuario.
+Aplica la corrección al borrador y retorna el email corregido.
+
+BORRADOR ORIGINAL:
+{original_draft}
+
+INSTRUCCIÓN DEL USUARIO:
+{message}
+
+Responde SOLO JSON:
+{{"to": "email@ejemplo.com", "subject": "asunto corregido", "body": "cuerpo corregido"}}
+
+REGLAS:
+- Extrae "to" y "subject" del borrador original si el usuario no los cambia
+- Aplica la corrección que pide el usuario al body
+- Si el usuario pega un email completo nuevo (con Para:/Asunto:), usarlo directamente
+- Mantén todo lo demás igual
+- NO incluir markdown en el JSON"""
+
+                    _resp = await _model.ainvoke([
+                        {"role": "system", "content": "Aplica correcciones a borradores de email. Responde SOLO JSON."},
+                        {"role": "user", "content": correction_prompt},
+                    ])
+
+                    raw = (_resp.content or "").strip().replace("```json", "").replace("```", "")
+                    corrected = json.loads(raw)
+                    to = corrected.get("to", "") or to
+                    subject = corrected.get("subject", "")
+                    body = corrected.get("body", "")
+
+                except Exception as e:
+                    print(f"HITL: Error applying correction via LLM: {e}")
+                    edited_parts = _parse_edited_email(message, pending)
+                    to = edited_parts["to"]
+                    subject = edited_parts["subject"]
+                    body = edited_parts["body"]
+            else:
+                edited_parts = _parse_edited_email(message, pending)
+                to = edited_parts["to"]
+                subject = edited_parts["subject"]
+                body = edited_parts["body"]
+
+            # Aprender de la corrección
+            if original_draft:
                 try:
                     from api.services.user_memory_service import extract_correction_learnings
-                    to_addr = pending.get("to", "")
-                    context = f"Email dirigido a: {to_addr}"
-                    await extract_correction_learnings(empresa_id, user_id, original, message, context)
+                    corrected_text = f"Para: {to}\nAsunto: {subject}\n\n{body}"
+                    await extract_correction_learnings(
+                        empresa_id, user_id, original_draft, corrected_text,
+                        f"Email dirigido a: {to}"
+                    )
                 except Exception as e:
-                    print(f"HITL: Error extrayendo correcciones: {e}")
+                    print(f"HITL: Error extracting corrections: {e}")
 
-            # Crear nuevo borrador con la versión editada y enviar
+            # Mostrar borrador corregido para aprobación (NUNCA enviar directo)
             _resolve_pending(pending["id"], "edited")
-            try:
-                from api.services.gmail_service import gmail_draft, gmail_send
-                edited_parts = _parse_edited_email(message, pending)
-                draft_result = gmail_draft(
-                    to=edited_parts["to"],
-                    subject=edited_parts["subject"],
-                    body=edited_parts["body"],
-                    empresa_id=empresa_id,
-                    user_id=user_id,
-                )
-                if draft_result.get("draft_id"):
-                    send_result = gmail_send(draft_result["draft_id"], empresa_id=empresa_id, user_id=user_id)
 
-                    # Crear tracking para monitoreo de respuesta
-                    try:
-                        from api.services.email_followup_service import create_followup
-                        create_followup(
-                            empresa_id=empresa_id,
-                            user_id=user_id,
-                            to_email=edited_parts["to"],
-                            subject=edited_parts["subject"],
-                            context=edited_parts["body"][:200],
-                        )
-                    except Exception as e:
-                        print(f"HITL: Error creating followup tracking: {e}")
+            from api.services.gmail_service import gmail_draft
+            new_draft = gmail_draft(to=to, subject=subject, body=body, empresa_id=empresa_id, user_id=user_id)
 
-                    return {
-                        "response": (
-                            f"✅ Email editado y enviado a **{edited_parts['to']}**. Aprendí de tus correcciones.\n\n"
-                            f"📬 Estoy monitoreando la respuesta — te aviso cuando conteste."
-                        ),
-                        "intent": "email",
-                        "model_used": "hitl_learning",
-                    }
-                else:
-                    return {"response": f"Error creando borrador editado: {draft_result.get('error', 'desconocido')}", "intent": "email", "model_used": "hitl"}
-            except Exception as e:
-                print(f"HITL: Error enviando email editado: {e}")
-                return {"response": f"Error enviando el email editado: {e}", "intent": "email", "model_used": "hitl"}
+            if new_draft.get("draft_id"):
+                _save_pending(empresa_id, user_id, "email_send", {
+                    "draft_id": new_draft["draft_id"],
+                    "to": to,
+                    "original_draft": f"Para: {to}\nAsunto: {subject}\n\n{body}",
+                })
+
+                return {
+                    "response": (
+                        f"✉️ **Borrador corregido:**\n\n"
+                        f"📬 **Para:** {to}\n"
+                        f"📝 **Asunto:** {subject}\n\n"
+                        f"💬 **Cuerpo:**\n{body}\n\n"
+                        f"---\n"
+                        f"¿Lo envío? Responde **sí** para confirmar o **no** para cancelar."
+                    ),
+                    "intent": "email",
+                    "model_used": "hitl_correction",
+                }
+            else:
+                return {
+                    "response": f"Error creando borrador corregido: {new_draft.get('error', 'desconocido')}",
+                    "intent": "email",
+                    "model_used": "hitl",
+                }
         else:
-            # El usuario dice algo que no es aprobación, rechazo ni edición
-            # NO cancelar — mantener pending vivo para cuando diga "sí"/"envíalo"
+            # Pending activo pero no es email_send — mantener vivo
             print(f"HITL: User said '{message[:50]}' with pending active — keeping pending alive")
 
     # ── Configure Brief: detección rápida antes del router ──

@@ -199,8 +199,17 @@ async def execute_calendar_action(state: CalendarState) -> dict:
         if "error" in result:
             return {"response": f"Error actualizando evento: {result['error']}"}
 
+        response_text = "Evento actualizado correctamente."
+        try:
+            attendees = target_event.get("attendees", [])
+            if attendees:
+                names = ", ".join(a.get("displayName", a.get("email", "")) for a in attendees[:3])
+                response_text += f"\n\n💡 Esta reunión tenía participantes ({names}). ¿Quieres que les avise del cambio?"
+        except Exception:
+            pass
+
         return {
-            "response": "Evento actualizado correctamente.",
+            "response": response_text,
             "sources_used": [
                 {"name": "calendar", "detail": "search_events", "confidence": 0.79},
                 {"name": "calendar", "detail": "update_event", "confidence": 0.85},
@@ -210,6 +219,7 @@ async def execute_calendar_action(state: CalendarState) -> dict:
     if action == "delete":
         query = params.get("query", "")
         event_id = params.get("event_id", "")
+        deleted_event = None
 
         # protocolo: get_events/search -> delete
         if not event_id:
@@ -218,14 +228,25 @@ async def execute_calendar_action(state: CalendarState) -> dict:
             found = calendar_search_events(query, max_results=1, empresa_id=empresa_id, user_id=user_id)
             if not found:
                 return {"response": f"No encontre evento para eliminar con '{query}'."}
-            event_id = found[0]["id"]
+            deleted_event = found[0]
+            event_id = deleted_event["id"]
 
         result = calendar_delete_event(event_id, empresa_id=empresa_id, user_id=user_id)
         if "error" in result:
             return {"response": f"Error eliminando evento: {result['error']}"}
 
+        response_text = "Evento eliminado correctamente."
+        if deleted_event:
+            try:
+                attendees = deleted_event.get("attendees", [])
+                if attendees:
+                    names = ", ".join(a.get("displayName", a.get("email", "")) for a in attendees[:3])
+                    response_text += f"\n\n💡 Esta reunión tenía participantes ({names}). ¿Quieres que les avise de la cancelación?"
+            except Exception:
+                pass
+
         return {
-            "response": "Evento eliminado correctamente.",
+            "response": response_text,
             "sources_used": [
                 {"name": "calendar", "detail": "search_events", "confidence": 0.79},
                 {"name": "calendar", "detail": "delete_event", "confidence": 0.85},

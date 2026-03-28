@@ -42,6 +42,7 @@ ROUTER_PROMPT = """Clasifica el mensaje del usuario en UNA categoria:
 - "my_company" -> Preguntas sobre MI propia empresa: "qué sabes de mi empresa", "háblame de mi empresa", "datos de mi empresa". NO confundir con entity_360 que es para terceros.
 - "my_memories" -> El usuario pregunta qué sabe Ada de él: "qué sabes de mí", "qué recuerdas", "qué has aprendido de mí", "que sabes de mi"
 - "explicit_memory" -> El usuario pide que Ada recuerde algo: "recuerda que", "ten en cuenta que", "no olvides que", "anota que"
+- "cross_agent" -> Acciones que combinan calendario + mensajería: "cancela la reunión y avísale", "agenda con X y mándale email", "reagenda y dile por Telegram", "avísale urgente que se canceló la reunión"
 - "conversational" -> Saludo, charla casual o pregunta general
 
 DIFERENCIA CLAVE:
@@ -91,6 +92,7 @@ INTENT_AGENT_MAP = {
     "my_company": "chat_agent",
     "my_memories": "chat_agent",
     "explicit_memory": "chat_agent",
+    "cross_agent": "cross_agent",
 }
 
 
@@ -175,6 +177,27 @@ async def classify_intent(state: RouterState) -> dict:
     if any(trigger in msg_lower for trigger in onboarding_triggers):
         print(f"ROUTER: onboarding detected")
         return {"intent": "onboarding", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # WHITELIST: cross-agent (calendar + mensajería combinados)
+    calendar_words = ["reunión", "reunion", "agenda", "agendar", "reagendar", "reagenda",
+                      "cancelar reunión", "cancelar reunion", "cita", "evento"]
+    message_words = ["avísale", "avisale", "avísele", "avisele", "mándale", "mandale",
+                     "envíale", "enviale", "escríbele", "escribele", "notifícale", "notificale",
+                     "dile", "correo", "email", "mail", "mensaje"]
+    has_calendar = any(w in msg_lower for w in calendar_words)
+    has_message = any(w in msg_lower for w in message_words)
+    if has_calendar and has_message:
+        print(f"ROUTER: cross_agent detected (calendar + message)")
+        return {"intent": "cross_agent", "confidence": 1.0, "routed_to": "cross_agent"}
+
+    # WHITELIST: mensaje urgente interno (sin calendario pero es DM)
+    urgent_patterns = [
+        "dile a ", "avísale a ", "avisale a ", "notifícale a ", "notificale a ",
+        "mándale mensaje a ", "mandale mensaje a ", "envíale mensaje a ",
+    ]
+    if any(msg_lower.startswith(p) for p in urgent_patterns):
+        print(f"ROUTER: cross_agent detected (internal message)")
+        return {"intent": "cross_agent", "confidence": 1.0, "routed_to": "cross_agent"}
 
     model, _ = selector.get_model("routing")
 

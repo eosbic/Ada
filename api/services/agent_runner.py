@@ -19,6 +19,7 @@ from api.agents.image_agent import image_agent
 from api.agents.consolidation_agent import consolidation_agent
 from api.agents.generic_pm_agent import generic_pm_agent
 from api.agents.entity_360_agent import entity_360_agent
+from api.agents.cross_agent import cross_agent
 
 from api.services.budget_service import check_budget, get_model_for_plan, log_usage, check_analyses, log_analysis
 from api.services.semantic_firewall import evaluate_semantic_firewall
@@ -46,6 +47,7 @@ AGENT_TASK_MAP = {
     "consolidation_agent": "excel_analysis",
     "generic_pm_agent": "chat_with_tools",
     "entity_360_agent": "chat",
+    "cross_agent": "chat_with_tools",
 }
 
 
@@ -64,6 +66,7 @@ AGENT_REGISTRY = {
     "consolidation_agent": consolidation_agent,
     "generic_pm_agent": generic_pm_agent,
     "entity_360_agent": entity_360_agent,
+    "cross_agent": cross_agent,
 }
 
 DEFAULT_AGENT = "chat_agent"

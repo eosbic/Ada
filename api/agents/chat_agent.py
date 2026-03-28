@@ -766,6 +766,106 @@ async def generate_response(state: ChatState) -> dict:
         except Exception as e:
             print(f"CHAT: Error processing meeting transcript: {e}")
 
+    # Intent: agent_status — mostrar estado de agentes
+    if state.get("intent") == "agent_status":
+        try:
+            from api.services.agent_status_service import format_agent_status_for_brief
+            status_text = format_agent_status_for_brief(empresa_id)
+            if status_text:
+                return {"response": status_text, "model_used": "agent_status", "sources_used": []}
+            return {"response": "No hay agentes configurados aun.", "model_used": "agent_status", "sources_used": []}
+        except Exception as e:
+            print(f"CHAT: Error getting agent status: {e}")
+
+    # Intent: activate_monitor — activar monitoreo de oportunidades
+    if state.get("intent") == "activate_monitor":
+        try:
+            from api.services.agent_status_service import set_agent_active
+
+            model_r, _ = selector.get_model("routing")
+            try:
+                resp = await model_r.ainvoke([
+                    {"role": "system", "content": (
+                        "El usuario quiere activar monitoreo de oportunidades. "
+                        "Extrae sectores, regiones y frecuencia. JSON:\n"
+                        '{"sectors": [], "regions": [], "frequency_hours": 48}\n'
+                        "Si no menciona frecuencia, usar 48. Sin markdown."
+                    )},
+                    {"role": "user", "content": message},
+                ])
+                raw = (resp.content or "").strip().replace("```json", "").replace("```", "")
+                config = json.loads(raw)
+            except Exception:
+                config = {"sectors": [], "regions": [], "frequency_hours": 48}
+
+            with sync_engine.connect() as conn:
+                conn.execute(
+                    sql_text("""
+                        INSERT INTO prospect_watch_config
+                            (empresa_id, user_id, sectors, regions, frequency_hours, is_active)
+                        VALUES (:eid, :uid, CAST(:sectors AS jsonb), CAST(:regions AS jsonb), :freq, TRUE)
+                        ON CONFLICT ON CONSTRAINT unique_watch_per_user DO UPDATE
+                        SET sectors = CAST(:sectors AS jsonb),
+                            regions = CAST(:regions AS jsonb),
+                            frequency_hours = :freq,
+                            is_active = TRUE,
+                            deactivated_at = NULL
+                    """),
+                    {
+                        "eid": empresa_id, "uid": user_id,
+                        "sectors": json.dumps(config.get("sectors", []), ensure_ascii=False),
+                        "regions": json.dumps(config.get("regions", []), ensure_ascii=False),
+                        "freq": config.get("frequency_hours", 48),
+                    },
+                )
+                conn.commit()
+
+            set_agent_active(empresa_id, "prospect_scout", True)
+
+            sectors_text = ", ".join(config.get("sectors", [])) or "todos los sectores de tu ICP"
+            freq = config.get("frequency_hours", 48)
+            freq_text = f"cada {freq} horas" if freq < 48 else f"cada {freq // 24} dias"
+
+            return {
+                "response": (
+                    f"✅ Monitoreo de oportunidades activado.\n\n"
+                    f"🔍 Sectores: {sectors_text}\n"
+                    f"⏰ Frecuencia: {freq_text}\n"
+                    f"📱 Te aviso por Telegram cuando encuentre algo.\n\n"
+                    f"Para desactivar: \"desactiva monitoreo\""
+                ),
+                "model_used": "monitor",
+                "sources_used": [],
+            }
+        except Exception as e:
+            print(f"CHAT: Error activating monitor: {e}")
+
+    # Intent: deactivate_monitor — desactivar monitoreo
+    if state.get("intent") == "deactivate_monitor":
+        try:
+            from api.services.agent_status_service import set_agent_active
+
+            with sync_engine.connect() as conn:
+                conn.execute(
+                    sql_text("""
+                        UPDATE prospect_watch_config
+                        SET is_active = FALSE, deactivated_at = NOW()
+                        WHERE empresa_id = :eid AND is_active = TRUE
+                    """),
+                    {"eid": empresa_id}
+                )
+                conn.commit()
+
+            set_agent_active(empresa_id, "prospect_scout", False)
+
+            return {
+                "response": "✅ Monitoreo de oportunidades desactivado.\n\nPara reactivar: \"activa monitoreo de oportunidades\"",
+                "model_used": "monitor",
+                "sources_used": [],
+            }
+        except Exception as e:
+            print(f"CHAT: Error deactivating monitor: {e}")
+
     # Intent: onboarding
     if state.get("intent") == "onboarding":
         try:

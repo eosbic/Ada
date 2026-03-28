@@ -96,6 +96,9 @@ INTENT_AGENT_MAP = {
     "follow_up": "chat_agent",
     "meeting_summary": "chat_agent",
     "meeting_process": "chat_agent",
+    "activate_monitor": "chat_agent",
+    "deactivate_monitor": "chat_agent",
+    "agent_status": "chat_agent",
 }
 
 
@@ -221,6 +224,33 @@ async def classify_intent(state: RouterState) -> dict:
     if any(trigger in msg_lower for trigger in meeting_process_triggers):
         print(f"ROUTER: meeting_process detected")
         return {"intent": "meeting_process", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # WHITELIST: activar/desactivar monitoreo de oportunidades
+    monitor_activate = [
+        "activa monitoreo", "activa prospeccion", "activa prospección",
+        "activa el monitoreo", "monitorea oportunidades",
+        "busca oportunidades automaticamente", "busca oportunidades automáticamente",
+    ]
+    if any(t in msg_lower for t in monitor_activate):
+        print(f"ROUTER: activate_monitor detected")
+        return {"intent": "activate_monitor", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    monitor_deactivate = [
+        "desactiva monitoreo", "desactiva prospeccion", "desactiva prospección",
+        "pausa monitoreo", "deten monitoreo", "detén monitoreo",
+    ]
+    if any(t in msg_lower for t in monitor_deactivate):
+        print(f"ROUTER: deactivate_monitor detected")
+        return {"intent": "deactivate_monitor", "confidence": 1.0, "routed_to": "chat_agent"}
+
+    # WHITELIST: estado de agentes
+    agent_status_triggers = [
+        "estado de los agentes", "que agentes estan activos", "qué agentes están activos",
+        "agentes activos", "status de agentes",
+    ]
+    if any(t in msg_lower for t in agent_status_triggers):
+        print(f"ROUTER: agent_status detected")
+        return {"intent": "agent_status", "confidence": 1.0, "routed_to": "chat_agent"}
 
     # WHITELIST: configurar follow-up de email
     follow_up_triggers = [

@@ -14,7 +14,7 @@ from api.agents.notion_agent import notion_agent
 from api.agents.plane_agent import plane_agent
 from api.agents.briefing_agent import briefing_agent
 from api.agents.morning_brief_agent import morning_brief_agent
-from api.agents.prospect_pro_agent import prospect_pro_agent
+from api.agents.commercial_intelligence_agent import commercial_intelligence_agent
 from api.agents.image_agent import image_agent
 from api.agents.consolidation_agent import consolidation_agent
 from api.agents.generic_pm_agent import generic_pm_agent
@@ -57,7 +57,7 @@ AGENT_REGISTRY = {
     "image_analyst": image_agent,
     "calendar_agent": calendar_agent,
     "email_agent": email_agent,
-    "prospecting_agent": prospect_pro_agent,
+    "prospecting_agent": commercial_intelligence_agent,
     "team_agent": team_agent,
     "notion_agent": notion_agent,
     "project_agent": plane_agent,

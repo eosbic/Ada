@@ -131,10 +131,23 @@ async def _generate_and_send_brief(user: dict):
 
         print(f"MORNING BRIEF: Brief generado para {nombre} ({empresa_id[:8]})")
 
+        # Agregar agent status al brief
+        agent_status_text = ""
+        try:
+            from api.services.agent_status_service import format_agent_status_for_brief, ensure_agent_status_exists
+            ensure_agent_status_exists(empresa_id)
+            agent_status_text = format_agent_status_for_brief(empresa_id)
+        except Exception:
+            pass
+
+        brief_text = f"*Buenos dias, {nombre}* ☀️\n\n{response}"
+        if agent_status_text:
+            brief_text += f"\n\n{agent_status_text}"
+
         # Enviar por Telegram
         telegram_id = user.get("telegram_id", "")
         if telegram_id and TELEGRAM_BOT_TOKEN:
-            await _send_telegram(telegram_id, f"*Buenos dias, {nombre}* ☀️\n\n{response}")
+            await _send_telegram(telegram_id, brief_text)
             print(f"MORNING BRIEF: Enviado por Telegram a {nombre}")
 
         # Marcar como enviado hoy

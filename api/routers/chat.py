@@ -507,9 +507,21 @@ REGLAS:
             has_content = any(ind in msg_lower_comp for ind in content_indicators)
 
             if has_content and partial_email:
-                # Ya tenemos email + contenido, re-disparar automaticamente
-                print(f"HITL: Auto-enriching — email={partial_email}, original has content")
-                auto_enriched = f"Escribe un email a {partial_email} con este contenido: {message}"
+                # Extraer solo el contenido real del mensaje (despues de "dile que", "diciendole", etc.)
+                import re as _re_content
+                _content_match = _re_content.search(
+                    r'(?:dile que|y dile que|diciendole que|diciéndole que|y que le diga que|que le diga que)\s*(.+)',
+                    message, _re_content.IGNORECASE | _re_content.DOTALL
+                )
+                _extracted = _content_match.group(1).strip() if _content_match else message
+                print(f"HITL: Auto-enriching — email={partial_email}, extracted content: {_extracted[:60]}")
+                # Extraer nombre del destinatario del mensaje original
+                _name_match = _re_content.search(
+                    r'(?:mail|correo|email|mensaje)\s+a\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)',
+                    message, _re_content.IGNORECASE
+                )
+                _recipient = _name_match.group(1) if _name_match else partial_email
+                auto_enriched = f"Escribe un email a {partial_email}. El destinatario se llama {_recipient}. Contenido del email: {_extracted}"
                 auto_result = await run_agent(
                     message=auto_enriched,
                     empresa_id=empresa_id,

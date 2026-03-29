@@ -59,6 +59,23 @@ async def search_prospect_info(state: ProspectingState) -> dict:
     """Busca info del prospecto en Qdrant."""
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
+    # Inyectar sector desde DNA si dice "mi sector"
+    msg_lower_p = message.lower() if message else ""
+    if any(t in msg_lower_p for t in ["mi sector", "mi industria"]):
+        try:
+            from api.database import sync_engine
+            from sqlalchemy import text as _sql_t
+            with sync_engine.connect() as _conn:
+                _row = _conn.execute(
+                    _sql_t("SELECT description FROM ada_company_profile WHERE empresa_id = :eid"),
+                    {"eid": empresa_id}
+                ).fetchone()
+                if _row and _row.description:
+                    message = message + f" (Sector de mi empresa: {_row.description})"
+                    print(f"PROSPECTING: Injected sector from DNA")
+        except Exception as e:
+            print(f"PROSPECTING: Error injecting sector: {e}")
+
     memories = search_memory(message, empresa_id=empresa_id)
 
     context = "\n".join(memories) if memories else "Sin información previa de este prospecto."

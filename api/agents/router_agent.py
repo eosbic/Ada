@@ -262,6 +262,13 @@ async def classify_intent(state: RouterState) -> dict:
         "investiga el mercado", "analiza el mercado",
         "perfila a ", "investiga a ", "quien es ", "quién es ",
         "perfila la empresa", "informacion de la empresa", "información de la empresa",
+        "en mi sector", "en mi industria", "mi sector", "mi industria",
+        "empresas de mi sector", "oportunidades en mi sector",
+        "clientes en mi sector", "competidores en mi sector",
+        "en el sector hotelero", "en el sector de", "en la industria de",
+        "en el sector tecnológico", "en el sector tecnologico",
+        "en el sector salud", "en el sector retail",
+        "en el sector financiero", "en el sector educativo",
     ]
     if any(trigger in msg_lower for trigger in prospecting_triggers):
         print(f"ROUTER: prospecting detected (whitelist)")

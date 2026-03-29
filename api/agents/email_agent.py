@@ -257,6 +257,24 @@ async def execute_email_action(state: EmailState) -> dict:
             except Exception:
                 pass
 
+        # Cargar nombre del remitente para firma correcta
+        sender_name = ""
+        sender_hint = ""
+        if empresa_id and user_id:
+            try:
+                from api.database import sync_engine
+                from sqlalchemy import text as _sql_email
+                with sync_engine.connect() as _conn:
+                    _u = _conn.execute(
+                        _sql_email("SELECT nombre, apellido FROM usuarios WHERE id = :uid"),
+                        {"uid": user_id}
+                    ).fetchone()
+                    if _u and _u.nombre:
+                        sender_name = f"{_u.nombre} {_u.apellido or str()}".strip()
+                        sender_hint = f"El remitente se llama {sender_name}. Firma como {sender_name}, NO como Ada."
+            except Exception as e:
+                print(f"EMAIL: Error loading sender info: {e}")
+
         # Si no hay subject o body, generar con LLM
         if not subject or not body:
             model, _ = selector.get_model("email_draft")
@@ -268,11 +286,13 @@ REGLAS DE REDACCIÓN:
 - Usar el nombre del destinatario si lo conoces
 - Emails cortos y directos — máximo 4-5 líneas para el cuerpo
 - Ir al punto rápido, sin relleno cortés excesivo
-- Firmar con el nombre del remitente si está disponible"""
+- FIRMA: Firmar con el nombre REAL del remitente (NO como Ada). Despedida acorde al genero (Atento/Atenta)"""
             if contact_prefs:
                 draft_system += f"\n\nPREFERENCIAS PARA ESTE CONTACTO:\n{contact_prefs}\nAplica estas preferencias al tono y formato del email."
             if writing_prefs:
                 draft_system += writing_prefs
+            if sender_hint:
+                draft_system += "\n\n" + sender_hint
             gen = await model.ainvoke([
                 {"role": "system", "content": draft_system},
                 {"role": "user", "content": f"Para: {to}. Contexto: {state['message']}"},

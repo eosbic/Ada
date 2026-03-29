@@ -105,6 +105,8 @@ async def search_and_enrich_companies(
             payload["organization_locations"] = [location]
         if industry_keywords:
             payload["q_organization_keyword_tags"] = industry_keywords
+            if not company_name and industry_keywords:
+                payload["q_organization_name"] = " ".join(industry_keywords[:2])
 
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(
@@ -115,6 +117,16 @@ async def search_and_enrich_companies(
 
         if resp.status_code == 200:
             orgs = resp.json().get("organizations", [])
+
+            # Filtro client-side: priorizar matches de industria
+            if industry_keywords and orgs:
+                kw_lower = [k.lower() for k in industry_keywords]
+                def _industry_score(org):
+                    ind = (org.get("industry") or "").lower()
+                    kws = " ".join(org.get("keywords") or []).lower()
+                    return sum(1 for k in kw_lower if k in f"{ind} {kws}")
+                orgs.sort(key=_industry_score, reverse=True)
+
             for org in orgs[:max_results]:
                 companies.append({
                     "company_name": org.get("name", ""),

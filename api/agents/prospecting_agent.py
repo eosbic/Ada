@@ -67,11 +67,12 @@ async def search_prospect_info(state: ProspectingState) -> dict:
             from sqlalchemy import text as _sql_t
             with sync_engine.connect() as _conn:
                 _row = _conn.execute(
-                    _sql_t("SELECT description FROM ada_company_profile WHERE empresa_id = :eid"),
+                    _sql_t("SELECT business_description, industry_type FROM ada_company_profile WHERE empresa_id = :eid"),
                     {"eid": empresa_id}
                 ).fetchone()
-                if _row and _row.description:
-                    message = message + f" (Sector de mi empresa: {_row.description})"
+                if _row and (_row.business_description or _row.industry_type):
+                    sector_info = f"{_row.industry_type or str()} - {_row.business_description or str()}"
+                    message = message + f" (Sector de mi empresa: {sector_info})"
                     print(f"PROSPECTING: Injected sector from DNA")
         except Exception as e:
             print(f"PROSPECTING: Error injecting sector: {e}")

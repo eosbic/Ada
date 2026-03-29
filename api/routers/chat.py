@@ -230,8 +230,12 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
             _resolve_pending(pending["id"], "completed")
             partial_to = pending.get("partial_to", "")
 
+            original_msg = pending.get("original_message", "")
             if partial_to:
                 enriched = f"Escribe un email a {partial_to} con este contenido: {message}"
+            elif original_msg:
+                # El usuario dio el email, re-usar contenido original
+                enriched = f"Escribe un email a {message} con este contenido: {original_msg}"
             else:
                 enriched = f"Escribe un email a {message}"
 
@@ -253,6 +257,19 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                     "original_draft": result.get("original_draft", ""),
                 })
                 print(f"HITL: Draft created from composing, draft_id={result['draft_id']}")
+
+            # Re-check: si el agente pide mas info, guardar nuevo composing
+            if not result.get("needs_approval"):
+                resp_text = result.get("response", "").lower()
+                composing_re = ["qué quieres que le diga", "a quién le envío", "a quién le escribo", "me das el email"]
+                if any(p in resp_text for p in composing_re):
+                    email_m = re.search(r'[\w.-]+@[\w.-]+\.\w+', result.get("response", ""))
+                    p_email = email_m.group(0) if email_m else partial_to
+                    _save_pending(empresa_id, user_id, "email_composing", {
+                        "partial_to": p_email,
+                        "awaiting": "body" if p_email else "to",
+                    })
+                    print(f"HITL: Re-saved composing after enrichment, partial_to={p_email}")
 
             return result
 
@@ -480,8 +497,9 @@ REGLAS:
             _save_pending(empresa_id, user_id, "email_composing", {
                 "partial_to": partial_email,
                 "awaiting": "body" if partial_email else "to",
+                "original_message": message,
             })
-            print(f"HITL: Email composing saved — partial_to={partial_email}, awaiting={'body' if partial_email else 'to'}")
+            print(f"HITL: Email composing saved — partial_to={partial_email}, awaiting={'body' if partial_email else 'to'}, original_msg={message[:50]}")
 
     return result
 

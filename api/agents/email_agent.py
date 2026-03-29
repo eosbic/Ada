@@ -293,6 +293,17 @@ REGLAS DE REDACCIÓN:
                 draft_system += writing_prefs
             if sender_hint:
                 draft_system += "\n\n" + sender_hint
+            # Extraer nombre del destinatario del contexto
+            import re as _re_email
+            _recipient_name = ""
+            _msg = state.get("message", "")
+            # Patron: "email a NombreApellido" o "a NombreApellido con"
+            _name_match = _re_email.search(r'(?:email|mail|mensaje|correo|escr[ií]b[ea]le|env[ií]ale)\s+a\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)', _msg)
+            if _name_match:
+                _recipient_name = _name_match.group(1)
+            recipient_hint = f"\nEl DESTINATARIO se llama {_recipient_name}. El saludo DEBE ser para {_recipient_name}, NO para el remitente." if _recipient_name else "\nEl saludo debe dirigirse al DESTINATARIO (persona en Para:), NO al remitente."
+            draft_system += recipient_hint
+
             gen = await model.ainvoke([
                 {"role": "system", "content": draft_system},
                 {"role": "user", "content": f"Para: {to}. Contexto: {state['message']}"},
@@ -384,6 +395,18 @@ def _search_contacts(empresa_id: str, user_id: str, name: str) -> list:
             readMask="names,emailAddresses,organizations",
             pageSize=5,
         ).execute()
+
+        # Google People API a veces retorna 0 en la primera llamada — retry una vez
+        if not results.get("results"):
+            import time
+            time.sleep(1)
+            results = service.people().searchContacts(
+                query=name,
+                readMask="names,emailAddresses,organizations",
+                pageSize=5,
+            ).execute()
+
+        print(f"EMAIL CONTACTS: query='{name}', results={len(results.get('results', []))}")
 
         contacts = []
         for person in results.get("results", []):

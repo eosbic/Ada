@@ -227,7 +227,14 @@ async def chat(data: dict, current_user: dict = Depends(get_current_user)):
                 _resolve_pending(pending["id"], "cancelled")
                 return {"response": "Email cancelado.", "intent": "email", "model_used": "hitl"}
 
-            _resolve_pending(pending["id"], "completed")
+            # Detectar si el usuario inicia una NUEVA solicitud de email (no continuacion)
+            _new_email_indicators = ["enviale", "envíale", "escribele", "escríbele", "manda un mail", "envia un mail", "envía un mail", "escribe un mail", "enviale un mail", "envíale un mail"]
+            if any(ind in message.lower() for ind in _new_email_indicators):
+                _resolve_pending(pending["id"], "cancelled")
+                print(f"HITL: New email request detected, cancelling stale composing")
+                # Caer al flujo normal (no return, continuar al router)
+            else:
+                _resolve_pending(pending["id"], "completed")
             partial_to = pending.get("partial_to", "")
 
             original_msg = pending.get("original_message", "")

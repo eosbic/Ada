@@ -26,6 +26,14 @@ async def _handle_configure_brief(message: str, empresa_id: str, user_id: str) -
         "desactiva el brief", "desactivar brief", "desactiva brief",
         "cancela el brief", "cancelar brief", "no quiero brief",
         "cambia el brief", "cambiar hora del brief",
+        # Variaciones naturales
+        "briefing", "mi briefing", "el briefing", "briefing diario",
+        "envíame el briefing", "enviame el briefing", "quiero el briefing",
+        "activa el briefing", "desactiva el briefing",
+        "resumen matutino", "resumen de la mañana", "resumen mañanero",
+        "brief mañanero", "briefing mañanero",
+        "enviame mi brief", "envíame mi brief",
+        "enviame mi briefing", "envíame mi briefing",
     ]
 
     if not any(k in msg for k in brief_keywords):

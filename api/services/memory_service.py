@@ -67,13 +67,21 @@ def _ensure_empresa_index(collection_name: str):
         print(f"QDRANT: index ensure warning on '{collection_name}': {e}")
 
 
-def search_memory(query: str, empresa_id: str = "") -> list:
-    vector = embeddings.embed_query(query)
-    query_filter = None
-    if empresa_id:
-        query_filter = Filter(
-            must=[FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
+def _validate_empresa_id(empresa_id: str, fn_name: str) -> None:
+    """Validacion centralizada. Sin empresa_id = data leak potencial."""
+    if not empresa_id or not isinstance(empresa_id, str) or empresa_id.strip() == "":
+        raise ValueError(
+            f"[{fn_name}] empresa_id es OBLIGATORIO para aislamiento multi-tenant. "
+            f"Recibido: '{empresa_id}'"
         )
+
+
+def search_memory(query: str, empresa_id: str) -> list:
+    _validate_empresa_id(empresa_id, "search_memory")
+    vector = embeddings.embed_query(query)
+    query_filter = Filter(
+        must=[FieldCondition(key="empresa_id", match=MatchValue(value=empresa_id))]
+    )
     results = client.query_points(
         collection_name=COLLECTION,
         query=vector,
@@ -83,7 +91,8 @@ def search_memory(query: str, empresa_id: str = "") -> list:
     return [r.payload.get("text", "") for r in results.points if r.payload.get("text")]
 
 
-def store_memory(text: str, empresa_id: str = ""):
+def store_memory(text: str, empresa_id: str):
+    _validate_empresa_id(empresa_id, "store_memory")
     vector = embeddings.embed_query(text)
     client.upsert(
         collection_name=COLLECTION,
@@ -103,6 +112,7 @@ def store_vector_knowledge(
     metadata: dict | None = None,
     collection_name: str = VECTOR_STORE1_COLLECTION,
 ):
+    _validate_empresa_id(empresa_id, "store_vector_knowledge")
     vector = embeddings.embed_query(text)
     payload = {
         "text": text,
@@ -122,6 +132,7 @@ def store_vector_knowledge(
 
 
 def store_report(text: str, empresa_id: str, file_name: str, report_type: str = "excel"):
+    _validate_empresa_id(empresa_id, "store_vector_knowledge")
     vector = embeddings.embed_query(text)
     payload = {
         "text": text,
@@ -222,13 +233,11 @@ def store_image_report(text: str, empresa_id: str, file_name: str, metadata: dic
     )
 
 
-def search_reports(query: str, empresa_id: str = "", user_id: str = "") -> list:
+def search_reports(query: str, empresa_id: str, user_id: str = "") -> list:
     """Search reports in PostgreSQL with full-text + ILIKE fallback. RBAC filter if user_id provided."""
+    _validate_empresa_id(empresa_id, "search_reports")
     from api.database import sync_engine
     from sqlalchemy import text as sql_text
-
-    if not empresa_id:
-        return []
 
     # Build RBAC clause
     rbac_clause = ""

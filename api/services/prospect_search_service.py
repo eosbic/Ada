@@ -78,6 +78,7 @@ async def search_and_enrich_companies(
     company_name: str = "",
     company_domain: str = "",
     location: str = "",
+    industry_keywords: list = None,
     max_results: int = 5,
 ) -> list:
     """Busca y enriquece empresas con Apollo.io (free tier compatible)."""
@@ -94,16 +95,22 @@ async def search_and_enrich_companies(
 
     try:
         # Paso 1: Buscar organizaciones
+        payload = {
+            "page": 1,
+            "per_page": max_results,
+        }
+        if company_name:
+            payload["q_organization_name"] = company_name
+        if location:
+            payload["organization_locations"] = [location]
+        if industry_keywords:
+            payload["q_organization_keyword_tags"] = industry_keywords
+
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(
                 "https://api.apollo.io/api/v1/organizations/search",
                 headers={"Content-Type": "application/json", "X-Api-Key": api_key},
-                json={
-                    "q_organization_name": company_name or "",
-                    "organization_locations": [location] if location else [],
-                    "page": 1,
-                    "per_page": max_results,
-                },
+                json=payload,
             )
 
         if resp.status_code == 200:

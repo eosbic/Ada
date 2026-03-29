@@ -27,6 +27,8 @@ class CommercialState(TypedDict, total=False):
 
     mode: str
     dna: dict
+    sectors: list
+    regions: list
     signals: list
     leads: list
     prospect: dict
@@ -127,7 +129,7 @@ async def search_signals(state: CommercialState) -> dict:
         keywords=keywords,
     )
 
-    return {"signals": signals}
+    return {"signals": signals, "sectors": sectors, "regions": regions}
 
 
 async def find_leads(state: CommercialState) -> dict:
@@ -166,6 +168,8 @@ async def find_leads(state: CommercialState) -> dict:
     empresa_id = state.get("empresa_id", "")
     dna = state.get("dna", {})
     signals = state.get("signals", [])
+    sectors = state.get("sectors", [])
+    regions = state.get("regions", [])
 
     all_leads = []
 
@@ -193,6 +197,7 @@ async def find_leads(state: CommercialState) -> dict:
                 company_name=company.get("name", ""),
                 company_domain=company.get("domain", ""),
                 location=dna.get("city", ""),
+                industry_keywords=sectors,
                 max_results=2,
             )
             all_leads.extend(results)
@@ -201,7 +206,8 @@ async def find_leads(state: CommercialState) -> dict:
         results = await search_and_enrich_companies(
             empresa_id=empresa_id,
             company_name="",
-            location=dna.get("city", "Colombia"),
+            location=regions[0] if regions else dna.get("city", "Colombia"),
+            industry_keywords=sectors,
             max_results=5,
         )
         all_leads.extend(results)
@@ -395,8 +401,13 @@ Responde JSON:
         size = prospect.get("company_size", "")
         size_str = f" ({size} empleados)" if size else ""
         desc = prospect.get("description") or prospect.get("seo_description") or ""
-        techs = prospect.get("technologies", [])
-        techs_str = ", ".join(str(t) for t in techs[:5]) if techs else ""
+        tech_list = prospect.get("technologies", [])
+        if tech_list and isinstance(tech_list[0], dict):
+            techs_str = ", ".join(t.get("name", "") for t in tech_list[:5] if t.get("name"))
+        elif tech_list:
+            techs_str = ", ".join(str(t) for t in tech_list[:5])
+        else:
+            techs_str = ""
         revenue = prospect.get("annual_revenue", "")
 
         response = f"""🎯 **Perfil de Empresa**

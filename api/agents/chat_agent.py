@@ -9,6 +9,30 @@ from langgraph.graph import StateGraph, END
 from models.selector import selector
 from sqlalchemy import text as sql_text
 from api.services.graph_navigator import traverse_report_graph
+def _get_meeting_rbac_clause(empresa_id: str, user_id: str) -> str:
+    """Retorna clause SQL para filtrar reuniones por permisos."""
+    try:
+        from api.services.rbac_service import get_user_permissions
+        rbac = get_user_permissions(empresa_id, user_id)
+        if rbac.get("is_admin"):
+            return ""
+        return "AND (participants::text ILIKE :user_pattern)"
+    except Exception:
+        return ""
+
+
+def _get_meeting_rbac_params(empresa_id: str, user_id: str) -> dict:
+    """Retorna params para el filtro RBAC de reuniones."""
+    try:
+        from api.services.rbac_service import get_user_permissions
+        rbac = get_user_permissions(empresa_id, user_id)
+        if rbac.get("is_admin"):
+            return {}
+        return {"user_pattern": f"%{user_id}%"}
+    except Exception:
+        return {}
+
+
 from api.services.memory_service import (
     search_memory,
     store_memory,
@@ -708,9 +732,10 @@ async def generate_response(state: ChatState) -> dict:
                         SELECT event_title, event_date, participants, summary, tasks, decisions, risks, next_meeting
                         FROM meeting_events
                         WHERE empresa_id = :eid
+                        {meeting_rbac}
                         ORDER BY created_at DESC LIMIT 1
-                    """),
-                    {"eid": empresa_id}
+                    """.format(meeting_rbac=_get_meeting_rbac_clause(empresa_id, user_id))),
+                    {**{"eid": empresa_id}, **_get_meeting_rbac_params(empresa_id, user_id)}
                 ).fetchone()
 
             if row:

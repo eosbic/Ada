@@ -253,6 +253,11 @@ async def run_agent(
         from api.services.rbac_service import check_agent_access
         allowed, reason = check_agent_access(empresa_id, user_id, routed_to)
         if not allowed:
+            try:
+                from api.services.audit_service import log_rbac_blocked
+                log_rbac_blocked(empresa_id, user_id, routed_to, reason)
+            except Exception:
+                pass
             return {
                 "response": reason,
                 "intent": intent,
@@ -274,6 +279,13 @@ async def run_agent(
         print(f"WARNING: Agent '{routed_to}' not implemented. Using {DEFAULT_AGENT}")
         agent = AGENT_REGISTRY[DEFAULT_AGENT]
         routed_to = DEFAULT_AGENT
+
+    # 2.9) Audit: registrar acceso al agente
+    try:
+        from api.services.audit_service import log_access
+        log_access(empresa_id or "", user_id or "", "access_agent", agent_name=routed_to)
+    except Exception:
+        pass
 
     # 3) Orquestacion multi-fuente obligatoria (dual repo + tools contextuales)
     tool_context = await collect_multi_source_context(
@@ -329,6 +341,16 @@ async def run_agent(
         "sources_used": tool_context.get("sources_used", []),
         "dual_repo_checked": tool_context.get("dual_repo_checked", True),
     }
+
+    # RBAC: Inyectar rol y permisos en el state del agente
+    try:
+        from api.services.rbac_service import get_user_permissions
+        _rbac = get_user_permissions(empresa_id or "", user_id or "")
+        agent_input["user_role"] = _rbac.get("role_title", "")
+        agent_input["user_permissions"] = _rbac.get("permissions", {})
+        agent_input["is_admin"] = _rbac.get("is_admin", False)
+    except Exception as e:
+        print(f"RUNNER: Error injecting RBAC: {e}")
 
     if budget_override:
         agent_input["model_preference"] = budget_override

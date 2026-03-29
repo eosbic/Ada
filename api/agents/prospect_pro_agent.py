@@ -129,6 +129,18 @@ async def extract_prospect_info(state: ProspectState) -> dict:
     # Buscar en memoria si ya tenemos info de este prospecto
     search_terms = prospect_data.get("empresa", "") or prospect_data.get("nombre_contacto", "")
     empresa_id = state.get("empresa_id", "")
+    # RBAC: verificar permiso de prospeccion
+    if empresa_id and user_id:
+        try:
+            from api.services.rbac_service import get_user_permissions
+            _rbac_pp = get_user_permissions(empresa_id, user_id)
+            if not _rbac_pp.get("is_admin"):
+                _perms_pp = _rbac_pp.get("permissions", {})
+                if not _perms_pp.get("can_prospect") and not _perms_pp.get("can_view_clients"):
+                    return {"response": "No tienes permiso para acceder a prospeccion. Contacta a tu administrador.", "model_used": "rbac"}
+        except Exception as e:
+            print(f"PROSPECT_PRO: RBAC check error: {e}")
+
     memories = search_memory(search_terms, empresa_id=empresa_id) if search_terms else []
     memory_context = "\n".join(memories) if memories else "Sin historial previo."
 

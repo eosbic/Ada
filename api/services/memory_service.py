@@ -236,6 +236,11 @@ def store_image_report(text: str, empresa_id: str, file_name: str, metadata: dic
 def search_reports(query: str, empresa_id: str, user_id: str = "") -> list:
     """Search reports in PostgreSQL with full-text + ILIKE fallback. RBAC filter if user_id provided."""
     _validate_empresa_id(empresa_id, "search_reports")
+    try:
+        from api.services.audit_service import log_access
+        log_access(empresa_id, user_id or "", "view_report", "ada_reports")
+    except Exception:
+        pass
     from api.database import sync_engine
     from sqlalchemy import text as sql_text
 

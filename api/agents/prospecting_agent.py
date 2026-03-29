@@ -59,6 +59,18 @@ async def search_prospect_info(state: ProspectingState) -> dict:
     """Busca info del prospecto en Qdrant."""
     message = state.get("message", "")
     empresa_id = state.get("empresa_id", "")
+    # RBAC: verificar permiso de prospeccion
+    if empresa_id and user_id:
+        try:
+            from api.services.rbac_service import get_user_permissions
+            _rbac_p = get_user_permissions(empresa_id, user_id)
+            if not _rbac_p.get("is_admin"):
+                _perms = _rbac_p.get("permissions", {})
+                if not _perms.get("can_prospect") and not _perms.get("can_view_clients"):
+                    return {"response": "No tienes permiso para acceder a prospeccion. Contacta a tu administrador.", "model_used": "rbac"}
+        except Exception as e:
+            print(f"PROSPECTING: RBAC check error: {e}")
+
     # Inyectar sector desde DNA si dice "mi sector"
     msg_lower_p = message.lower() if message else ""
     if any(t in msg_lower_p for t in ["mi sector", "mi industria"]):

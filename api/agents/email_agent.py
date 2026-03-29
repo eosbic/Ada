@@ -340,6 +340,12 @@ REGLAS DE REDACCIÓN:
         if "error" in result:
             return {"response": f"Error enviando: {result['error']}"}
 
+        try:
+            from api.services.audit_service import log_access
+            log_access(empresa_id, user_id, "send_email", "email", detail={"draft_id": draft_id})
+        except Exception:
+            pass
+
         return {
             "response": "✅ Email enviado exitosamente.",
             "action_result": result,

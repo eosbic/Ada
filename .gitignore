@@ -31,3 +31,4 @@ node_modules/
 # Bóvedas de Telegram (datos generados)
 boveda/
 adav2/
+refresh_token.py

@@ -97,7 +97,7 @@ async def _mark_sent_today(user_id: str):
         async with AsyncSessionLocal() as db:
             await db.execute(text("""
                 UPDATE user_preferences
-                SET preferences = preferences || :patch::jsonb,
+                SET preferences = preferences || CAST(:patch AS jsonb),
                     updated_at = NOW()
                 WHERE user_id = :uid
             """), {

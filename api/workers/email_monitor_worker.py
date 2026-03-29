@@ -146,6 +146,7 @@ async def email_monitor_worker_loop():
             followups = get_active_followups()
 
             if followups:
+                _notified_emails = set()
                 print(f"EMAIL MONITOR: Revisando {len(followups)} emails en seguimiento")
 
             for f in followups:
@@ -165,7 +166,8 @@ async def email_monitor_worker_loop():
                 if response and response.get("found"):
                     mark_responded(followup_id, response.get("snippet", ""))
 
-                    if telegram_id:
+                    if telegram_id and to_email not in _notified_emails:
+                        _notified_emails.add(to_email)
                         notification = (
                             f"📬 **{f.get('to_name') or to_email}** respondió a tu email:\n\n"
                             f"📝 **Asunto:** {response.get('subject', 'Sin asunto')}\n"

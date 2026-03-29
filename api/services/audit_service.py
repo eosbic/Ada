@@ -18,6 +18,10 @@ def log_access(
     detail: dict = None,
 ) -> None:
     """Registra un acceso en audit_log."""
+    if not empresa_id or not user_id:
+        return
+    if not empresa_id or not user_id:
+        return
     try:
         with sync_engine.connect() as conn:
             conn.execute(

@@ -252,6 +252,21 @@ async def classify_intent(state: RouterState) -> dict:
         print(f"ROUTER: agent_status detected")
         return {"intent": "agent_status", "confidence": 1.0, "routed_to": "chat_agent"}
 
+    # WHITELIST: prospecting / commercial intelligence
+    prospecting_triggers = [
+        "busca oportunidades", "busca clientes", "busca prospectos",
+        "encuentra leads", "oportunidades en", "busca empresas",
+        "quiero nuevos clientes", "prospectar en",
+        "oportunidades en el sector", "busca en el sector",
+        "encuentra empresas", "busca empresas de",
+        "investiga el mercado", "analiza el mercado",
+        "perfila a ", "investiga a ", "quien es ", "quién es ",
+        "perfila la empresa", "informacion de la empresa", "información de la empresa",
+    ]
+    if any(trigger in msg_lower for trigger in prospecting_triggers):
+        print(f"ROUTER: prospecting detected (whitelist)")
+        return {"intent": "prospecting", "confidence": 1.0, "routed_to": "prospecting_agent"}
+
     # WHITELIST: configurar follow-up de email
     follow_up_triggers = [
         "si no responde", "si no contesta", "si no contestan",
